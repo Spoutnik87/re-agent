@@ -1,4 +1,5 @@
 """Source-context retrieval for the reverser prompt."""
+
 from __future__ import annotations
 
 import re
@@ -68,7 +69,7 @@ class SourceContextBuilder:
                 continue
             start_line = text.count("\n", 0, match.start()) + 1
             lines = text.splitlines()
-            snippet = "\n".join(lines[start_line - 1:start_line + 24])
+            snippet = "\n".join(lines[start_line - 1 : start_line + 24])
             return f"{path}:{start_line}\n```cpp\n{snippet}\n```"
         return ""
 
@@ -81,11 +82,13 @@ class SourceContextBuilder:
         target_match = self.indexer.find(class_name, target.function_name)
         preferred_path = Path(target_match.path) if target_match is not None else None
 
-        sibling_names = sorted({
-            fn_name
-            for cls_name, fn_name in self.indexer.token_index
-            if cls_name == class_name and fn_name != target.function_name
-        })
+        sibling_names = sorted(
+            {
+                fn_name
+                for cls_name, fn_name in self.indexer.token_index
+                if cls_name == class_name and fn_name != target.function_name
+            }
+        )
 
         def rank(fn_name: str) -> tuple[int, str]:
             match = self.indexer.find(class_name, fn_name)

@@ -1,4 +1,5 @@
 """Tests for parity scoring."""
+
 from __future__ import annotations
 
 from re_agent.core.models import Finding, ParityStatus

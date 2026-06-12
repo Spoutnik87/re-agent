@@ -1,4 +1,5 @@
 """JSON-backed persistent session state for tracking reversal progress."""
+
 from __future__ import annotations
 
 import json

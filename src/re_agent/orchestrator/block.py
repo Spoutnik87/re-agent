@@ -3,6 +3,7 @@
 First attempt (fast_mode): all flash — cheap, handles ~80% of functions.
 If FAIL: re-run with pro for reasoning (checker, var mapping, large blocks).
 """
+
 from __future__ import annotations
 
 import logging
@@ -33,8 +34,14 @@ logger = logging.getLogger(__name__)
 
 def _empty_result(target: FunctionTarget) -> ReversalResult:
     return ReversalResult(
-        target=target, code="", checker_verdict=None, objective_verdict=None,
-        parity_status=None, parity_findings=[], rounds_used=0, success=False,
+        target=target,
+        code="",
+        checker_verdict=None,
+        objective_verdict=None,
+        parity_status=None,
+        parity_findings=[],
+        rounds_used=0,
+        success=False,
     )
 
 
@@ -80,8 +87,10 @@ def reverse_blocks(
     if should_use_recursive(decompiled) and not skip_checker and not skip_var_mapping:
         decomposer = RecursiveDecomposer(llm, block_llm=block_llm, project_description=project_description)
         full_code = decomposer.decompose_and_reverse(
-            decompiled=decompiled, class_name=target.class_name,
-            function_name=target.function_name, address=target.address,
+            decompiled=decompiled,
+            class_name=target.class_name,
+            function_name=target.function_name,
+            address=target.address,
         )
         if not full_code:
             return _empty_result(target)
@@ -90,43 +99,63 @@ def reverse_blocks(
 
         ov: ObjectiveVerdict | None = None
         if objective_verifier_enabled:
-            ov = verify_candidate(full_code, target, backend,
+            ov = verify_candidate(
+                full_code,
+                target,
+                backend,
                 call_count_tolerance=objective_call_count_tolerance,
-                control_flow_tolerance=objective_control_flow_tolerance)
+                control_flow_tolerance=objective_control_flow_tolerance,
+            )
 
         cv = None
         if ov is None or ov.verdict == Verdict.FAIL:
             cv = checker.check(full_code, target)
         else:
-            cv = CheckerVerdict(verdict=Verdict.PASS,
+            cv = CheckerVerdict(
+                verdict=Verdict.PASS,
                 summary="Objective verifier passed — structure matches",
-                issues=[], fix_instructions=[])
+                issues=[],
+                fix_instructions=[],
+            )
 
         fr = 0
         while (cv.verdict != Verdict.PASS or (ov and ov.verdict == Verdict.FAIL)) and fr < max_fix_rounds:
             fr += 1
             decomposer._block_agent.reset_conversation()
             full_code = decomposer.decompose_and_reverse(
-                decompiled=decompiled, class_name=target.class_name,
-                function_name=target.function_name, address=target.address,
+                decompiled=decompiled,
+                class_name=target.class_name,
+                function_name=target.function_name,
+                address=target.address,
             )
             if not full_code:
                 break
             ov = None
             if objective_verifier_enabled:
-                ov = verify_candidate(full_code, target, backend,
+                ov = verify_candidate(
+                    full_code,
+                    target,
+                    backend,
                     call_count_tolerance=objective_call_count_tolerance,
-                    control_flow_tolerance=objective_control_flow_tolerance)
+                    control_flow_tolerance=objective_control_flow_tolerance,
+                )
             if ov is None or ov.verdict == Verdict.FAIL:
                 cv = checker.check(full_code, target)
             else:
-                cv = CheckerVerdict(verdict=Verdict.PASS,
-                    summary="Objective verifier passed", issues=[], fix_instructions=[])
+                cv = CheckerVerdict(
+                    verdict=Verdict.PASS, summary="Objective verifier passed", issues=[], fix_instructions=[]
+                )
 
         ok = cv.verdict == Verdict.PASS and (ov is None or ov.verdict != Verdict.FAIL)
         return ReversalResult(
-            target=target, code=full_code, checker_verdict=cv, objective_verdict=ov,
-            parity_status=None, parity_findings=[], rounds_used=1 + fr, success=ok,
+            target=target,
+            code=full_code,
+            checker_verdict=cv,
+            objective_verdict=ov,
+            parity_status=None,
+            parity_findings=[],
+            rounds_used=1 + fr,
+            success=ok,
         )
 
     split = split_decompiled_function(decompiled, max_block_lines=max_block_lines)
@@ -137,9 +166,7 @@ def reverse_blocks(
     # fast_mode: flash for everything. hybrid: pro for reasoning, flash for small blocks.
     _reasoning = block_llm if (fast_mode and block_llm is not None) else llm
     if fast_mode and block_llm is None:
-        logger.warning(
-            "fast_mode requested but no block_llm configured; using main LLM for all reasoning"
-        )
+        logger.warning("fast_mode requested but no block_llm configured; using main LLM for all reasoning")
     _block_fast = block_llm if block_llm is not None else llm
     _block_pro = llm
 
@@ -147,8 +174,10 @@ def reverse_blocks(
     var_mapping = ""
     if not skip_var_mapping:
         var_mapping = generate_variable_mapping(
-            decompiled=decompiled, class_name=target.class_name,
-            function_name=target.function_name, address=target.address,
+            decompiled=decompiled,
+            class_name=target.class_name,
+            function_name=target.function_name,
+            address=target.address,
             llm=_reasoning,
             project_description=project_description,
         )
@@ -183,19 +212,30 @@ def reverse_blocks(
                 ctx = var_context
             if reset_conv:
                 agent.reset_conversation()
-            bid, bc = block.id, agent.reverse_block(
-                block=block, class_name=target.class_name,
-                function_name=target.function_name, address=target.address,
-                full_decompiled=ctx, var_mapping=var_mapping,
-                reversed_blocks=reversed_blocks,
+            bid, bc = (
+                block.id,
+                agent.reverse_block(
+                    block=block,
+                    class_name=target.class_name,
+                    function_name=target.function_name,
+                    address=target.address,
+                    full_decompiled=ctx,
+                    var_mapping=var_mapping,
+                    reversed_blocks=reversed_blocks,
+                ),
             )
             reversed_blocks[bid] = bc
             all_code.append(bc)
         return all_code
 
     all_code = _reverse_all_blocks(
-        split, block_agent_fast, block_agent_pro, fast_mode,
-        var_mapping, var_context, decompiled,
+        split,
+        block_agent_fast,
+        block_agent_pro,
+        fast_mode,
+        var_mapping,
+        var_context,
+        decompiled,
         reset_conv=True,
     )
     full_code = _stitch(split, all_code)
@@ -205,18 +245,28 @@ def reverse_blocks(
     # Checker — skip for very large functions (>500 lines, token limit)
     if skip_checker:
         # Objective verifier is required when checker is skipped
-        ov = verify_candidate(full_code, target, backend,
+        ov = verify_candidate(
+            full_code,
+            target,
+            backend,
             call_count_tolerance=objective_call_count_tolerance,
-            control_flow_tolerance=objective_control_flow_tolerance)
+            control_flow_tolerance=objective_control_flow_tolerance,
+        )
         ok = ov.verdict != Verdict.FAIL
         return ReversalResult(
-            target=target, code=full_code,
-            checker_verdict=CheckerVerdict(verdict=Verdict.PASS if ok else Verdict.FAIL,
+            target=target,
+            code=full_code,
+            checker_verdict=CheckerVerdict(
+                verdict=Verdict.PASS if ok else Verdict.FAIL,
                 summary="Skipped LLM checker (function too large)" if ok else "Objective verifier failed",
                 issues=[] if ok else ov.findings,
-                fix_instructions=[]),
-            objective_verdict=ov, parity_status=None, parity_findings=[],
-            rounds_used=1, success=ok,
+                fix_instructions=[],
+            ),
+            objective_verdict=ov,
+            parity_status=None,
+            parity_findings=[],
+            rounds_used=1,
+            success=ok,
         )
 
     checker = CheckerAgent(_reasoning, backend, project_description=project_description)
@@ -224,26 +274,38 @@ def reverse_blocks(
     # Objective verifier first (free, no LLM tokens)
     ov: ObjectiveVerdict | None = None  # type: ignore[no-redef]
     if objective_verifier_enabled:
-        ov = verify_candidate(full_code, target, backend,
+        ov = verify_candidate(
+            full_code,
+            target,
+            backend,
             call_count_tolerance=objective_call_count_tolerance,
-            control_flow_tolerance=objective_control_flow_tolerance)
+            control_flow_tolerance=objective_control_flow_tolerance,
+        )
 
     # Only run LLM checker if objective verifier fails or is insufficient
     cv = None
     if ov is None or ov.verdict == Verdict.FAIL:
         cv = checker.check(full_code, target)
     else:
-        cv = CheckerVerdict(verdict=Verdict.PASS,
+        cv = CheckerVerdict(
+            verdict=Verdict.PASS,
             summary="Objective verifier passed — structure matches",
-            issues=[], fix_instructions=[])
+            issues=[],
+            fix_instructions=[],
+        )
 
     # Fix loop
     fr = 0
     while (cv.verdict != Verdict.PASS or (ov and ov.verdict == Verdict.FAIL)) and fr < max_fix_rounds:
         fr += 1
         all_code = _reverse_all_blocks(
-            split, block_agent_fast, block_agent_pro, fast_mode,
-            var_mapping, var_context, decompiled,
+            split,
+            block_agent_fast,
+            block_agent_pro,
+            fast_mode,
+            var_mapping,
+            var_context,
+            decompiled,
             reset_conv=True,
         )
         full_code = _stitch(split, all_code)
@@ -252,19 +314,30 @@ def reverse_blocks(
         # Objective-first: only run LLM checker if objective fails
         ov = None
         if objective_verifier_enabled:
-            ov = verify_candidate(full_code, target, backend,
+            ov = verify_candidate(
+                full_code,
+                target,
+                backend,
                 call_count_tolerance=objective_call_count_tolerance,
-                control_flow_tolerance=objective_control_flow_tolerance)
+                control_flow_tolerance=objective_control_flow_tolerance,
+            )
         if ov is None or ov.verdict == Verdict.FAIL:
             cv = checker.check(full_code, target)
         else:
-            cv = CheckerVerdict(verdict=Verdict.PASS,
-                summary="Objective verifier passed", issues=[], fix_instructions=[])
+            cv = CheckerVerdict(
+                verdict=Verdict.PASS, summary="Objective verifier passed", issues=[], fix_instructions=[]
+            )
 
     ok = cv.verdict == Verdict.PASS and (ov is None or ov.verdict != Verdict.FAIL)
     return ReversalResult(
-        target=target, code=full_code, checker_verdict=cv, objective_verdict=ov,
-        parity_status=None, parity_findings=[], rounds_used=1 + fr, success=ok,
+        target=target,
+        code=full_code,
+        checker_verdict=cv,
+        objective_verdict=ov,
+        parity_status=None,
+        parity_findings=[],
+        rounds_used=1 + fr,
+        success=ok,
     )
 
 

@@ -1,4 +1,5 @@
 """Reverser agent — gathers context and asks LLM to produce reversed C++ code."""
+
 from __future__ import annotations
 
 import logging
@@ -21,9 +22,7 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 CODE_BLOCK_RE = re.compile(r"```(?:cpp|c\+\+)?\s*\n(.*?)```", re.S)
 REVERSED_TAG_RE = re.compile(r"REVERSED_FUNCTION:\s*(.+)")
 PHASE_2_MARKER_RE = re.compile(r"##\s*Phase\s*2\s*:\s*Code", re.I)
-PHASE_1_SECTION_RE = re.compile(
-    r"##\s*Phase\s*1\s*:.*?\n(.*?)(?=##\s*Phase\s*2|\Z)", re.S | re.I
-)
+PHASE_1_SECTION_RE = re.compile(r"##\s*Phase\s*1\s*:.*?\n(.*?)(?=##\s*Phase\s*2|\Z)", re.S | re.I)
 
 
 class ReverserAgent:
@@ -88,8 +87,7 @@ class ReverserAgent:
                 if struct:
                     structs_text = f"{struct.name} (size: {struct.size})\n"
                     structs_text += "\n".join(
-                        f"  +0x{f.offset:X} {f.type_str} {f.name} (size: {f.size})"
-                        for f in struct.fields
+                        f"  +0x{f.offset:X} {f.type_str} {f.name} (size: {f.size})" for f in struct.fields
                     )
             except Exception:
                 structs_text = "Unavailable"
@@ -144,9 +142,7 @@ class ReverserAgent:
         all_fix_instructions = list(fix_instructions)
         if objective_findings:
             all_issues.extend(f"objective verifier: {finding}" for finding in objective_findings)
-            all_fix_instructions.extend(
-                "Resolve objective mismatch: " + finding for finding in objective_findings
-            )
+            all_fix_instructions.extend("Resolve objective mismatch: " + finding for finding in objective_findings)
         fix_prompt = render_template(
             PROMPTS_DIR / "fix_instructions.md",
             issues="\n".join(f"- {i}" for i in all_issues),
@@ -182,7 +178,7 @@ class ReverserAgent:
         # Prefer the code block AFTER the "Phase 2" marker when present
         phase2_match = PHASE_2_MARKER_RE.search(response)
         if phase2_match:
-            after_phase2 = response[phase2_match.end():]
+            after_phase2 = response[phase2_match.end() :]
             m = CODE_BLOCK_RE.search(after_phase2)
             if m:
                 return m.group(1).strip()

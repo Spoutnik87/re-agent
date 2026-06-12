@@ -1,4 +1,5 @@
 """Tests for LLM protocol and provider basics."""
+
 from __future__ import annotations
 
 from re_agent.config.schema import LLMConfig

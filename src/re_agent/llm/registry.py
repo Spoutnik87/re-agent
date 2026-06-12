@@ -1,4 +1,5 @@
 """LLM provider factory registry."""
+
 from __future__ import annotations
 
 from re_agent.config.schema import LLMConfig
@@ -63,6 +64,5 @@ def _create_provider_for_model(config: LLMConfig, model: str) -> LLMProvider:
         )
 
     raise ValueError(
-        f"Unknown LLM provider: {config.provider!r}. "
-        f"Supported providers: 'claude', 'openai', 'openai-compat', 'codex'."
+        f"Unknown LLM provider: {config.provider!r}. Supported providers: 'claude', 'openai', 'openai-compat', 'codex'."
     )

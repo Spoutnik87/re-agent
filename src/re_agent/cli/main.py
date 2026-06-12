@@ -1,4 +1,5 @@
 """CLI entry point for re-agent."""
+
 from __future__ import annotations
 
 import argparse
@@ -55,18 +56,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "init":
         from re_agent.cli.cmd_init import cmd_init
+
         return cmd_init(args)
 
     if args.command == "reverse":
         from re_agent.cli.cmd_reverse import cmd_reverse
+
         return cmd_reverse(args)
 
     if args.command == "parity":
         from re_agent.cli.cmd_parity import cmd_parity
+
         return cmd_parity(args)
 
     if args.command == "status":
         from re_agent.cli.cmd_status import cmd_status
+
         return cmd_status(args)
 
     parser.print_help()

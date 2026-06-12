@@ -1,4 +1,5 @@
 """re-agent reverse command — single function or class reversal."""
+
 from __future__ import annotations
 
 import argparse

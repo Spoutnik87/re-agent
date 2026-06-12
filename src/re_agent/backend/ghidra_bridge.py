@@ -1,4 +1,5 @@
 """Ghidra CLI bridge backend implementation."""
+
 from __future__ import annotations
 
 import re
@@ -44,9 +45,7 @@ class GhidraBridgeBackend:
         """
         ok, output = run_cmd([self._cli_path, *args], self._timeout_s)
         if not ok:
-            raise RuntimeError(
-                f"Ghidra CLI failed: {self._cli_path} {' '.join(args)}\n{output}"
-            )
+            raise RuntimeError(f"Ghidra CLI failed: {self._cli_path} {' '.join(args)}\n{output}")
         return output
 
     def _try_run(self, *args: str) -> str | None:
@@ -85,9 +84,7 @@ class GhidraBridgeBackend:
           return non-zero for ``--help`` or for bad arguments while still
           recognising the sub-command.
         """
-        rc, _stdout, stderr = run_cmd_split(
-            [self._cli_path, subcmd, "--help"], timeout_s=min(self._timeout_s, 10)
-        )
+        rc, _stdout, stderr = run_cmd_split([self._cli_path, subcmd, "--help"], timeout_s=min(self._timeout_s, 10))
         if rc == 0:
             return True
         stderr_lower = stderr.lower()
@@ -256,7 +253,7 @@ class GhidraBridgeBackend:
 
         lines = raw.strip().splitlines()
         # Count CALL instructions (match as x86 mnemonic, not substring)
-        _call_re = re.compile(r'(?:^|\s)CALL\s', re.I)
+        _call_re = re.compile(r"(?:^|\s)CALL\s", re.I)
         call_count = sum(1 for ln in lines if _call_re.search(ln) and not ln.lstrip().startswith(";"))
         # Check for FP-sensitive instructions
         from re_agent.utils.text import has_fp_asm

@@ -1,4 +1,5 @@
 """Checker agent — verifies reversed code against Ghidra decompilation."""
+
 from __future__ import annotations
 
 import re
@@ -19,9 +20,9 @@ FIX_RE = re.compile(r"FIX_INSTRUCTIONS:\s*\n((?:\s*-\s*.+\n?)+)", re.I)
 class CheckerAgent:
     """Verifies reversed code against Ghidra decompilation."""
 
-    def __init__(self, llm: LLMProvider, backend: REBackend,
-                 project_description: str = "",
-                 checker_custom_rules: str = "") -> None:
+    def __init__(
+        self, llm: LLMProvider, backend: REBackend, project_description: str = "", checker_custom_rules: str = ""
+    ) -> None:
         self.llm = llm
         self.backend = backend
         self._project_description = project_description

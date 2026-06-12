@@ -1,4 +1,5 @@
 """Post-reversal renaming pass — cleans up Ghidra variable/type names."""
+
 from __future__ import annotations
 
 import logging
@@ -22,9 +23,7 @@ class RenameAgent:
         self.llm = llm
         self._system_prompt = render_template(PROMPTS_DIR / "rename_system.md")
 
-    def rename(
-        self, code: str, class_name: str, function_name: str, address: str
-    ) -> str:
+    def rename(self, code: str, class_name: str, function_name: str, address: str) -> str:
         """Rename variables/types in a reversed function.
 
         Returns the renamed code, or the original if renaming fails.

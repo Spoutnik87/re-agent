@@ -1,4 +1,5 @@
 """Individual parity heuristic signals — each returns a Finding or None."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -27,11 +28,7 @@ def check_stub_markers(
 def check_trivial_stub(source: SourceMatch | None, **_kw: object) -> Finding | None:
     if source is None or source.plugin_call_count == 0:
         return None
-    likely_trivial = (
-        source.body_lines <= 14
-        and source.non_plugin_call_count <= 1
-        and source.control_flow_count == 0
-    )
+    likely_trivial = source.body_lines <= 14 and source.non_plugin_call_count <= 1 and source.control_flow_count == 0
     if likely_trivial:
         return Finding(level="red", reason="Source appears to be a trivial plugin::Call* stub")
     return None
@@ -54,11 +51,7 @@ def check_plugin_call_heavy(source: SourceMatch | None, **_kw: object) -> Findin
     if source is None or source.plugin_call_count == 0:
         return None
     plugin_heavy = source.plugin_call_count >= max(2, source.non_plugin_call_count)
-    trivial = (
-        source.body_lines <= 14
-        and source.non_plugin_call_count <= 1
-        and source.control_flow_count == 0
-    )
+    trivial = source.body_lines <= 14 and source.non_plugin_call_count <= 1 and source.control_flow_count == 0
     if plugin_heavy and not trivial:
         return Finding(
             level="yellow",

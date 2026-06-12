@@ -4,6 +4,7 @@ When a function or block exceeds the comfortable reversal size, asks the LLM
 to identify logical sub-sections, then reverses each sub-section independently
 and stitches them together.
 """
+
 from __future__ import annotations
 
 import re
@@ -30,8 +31,7 @@ class RecursiveDecomposer:
     reverses each sub-section independently, then stitches them back together.
     """
 
-    def __init__(self, llm: LLMProvider, block_llm: LLMProvider | None = None,
-                 project_description: str = "") -> None:
+    def __init__(self, llm: LLMProvider, block_llm: LLMProvider | None = None, project_description: str = "") -> None:
         self.llm = llm
         self._project_description = project_description
         _block_llm = block_llm if block_llm is not None else llm
@@ -112,9 +112,7 @@ class RecursiveDecomposer:
 
         return "\n".join(reversed_parts)
 
-    def _get_decomposition_plan(
-        self, decompiled: str, total_lines: int
-    ) -> list[tuple[str, int, int, str]]:
+    def _get_decomposition_plan(self, decompiled: str, total_lines: int) -> list[tuple[str, int, int, str]]:
         """Ask the LLM to produce a decomposition plan.
 
         Returns list of (section_id, start_line, end_line, description).

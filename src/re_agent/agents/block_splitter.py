@@ -3,14 +3,13 @@
 Each block has balanced braces — they can be concatenated to form the complete
 function body.  Blocks are split at top-level (depth-0) control-flow boundaries.
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
-CONTROL_FLOW_KW_RE = re.compile(
-    r"^\s*(if|else\s+if|else|for|while|do|switch|case|default)\b"
-)
+CONTROL_FLOW_KW_RE = re.compile(r"^\s*(if|else\s+if|else|for|while|do|switch|case|default)\b")
 RETURN_RE = re.compile(r"^\s*return\b")
 LABEL_RE = re.compile(r"^\s*(LAB_[0-9a-fA-F]+)\s*:")
 GOTO_RE = re.compile(r"^\s*goto\s+(LAB_[0-9a-fA-F]+)\s*;")
@@ -30,56 +29,56 @@ def _skip_strings_and_comments(text: str) -> list[tuple[int, str]]:
     while i < n:
         ch = text[i]
         if ch == '"':
-            result.append((i, ' '))
+            result.append((i, " "))
             i += 1
             while i < n:
-                if text[i] == '\\':
-                    result.append((i, ' '))
+                if text[i] == "\\":
+                    result.append((i, " "))
                     i += 1
                     if i < n:
-                        result.append((i, ' '))
+                        result.append((i, " "))
                         i += 1
                 elif text[i] == '"':
-                    result.append((i, ' '))
+                    result.append((i, " "))
                     i += 1
                     break
                 else:
-                    result.append((i, ' '))
+                    result.append((i, " "))
                     i += 1
-        elif ch == '/' and i + 1 < n and text[i + 1] == '/':
-            while i < n and text[i] != '\n':
-                result.append((i, ' '))
+        elif ch == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                result.append((i, " "))
                 i += 1
-        elif ch == '/' and i + 1 < n and text[i + 1] == '*':
-            result.append((i, ' '))
+        elif ch == "/" and i + 1 < n and text[i + 1] == "*":
+            result.append((i, " "))
             i += 2
-            result.append((i - 1, ' '))
+            result.append((i - 1, " "))
             while i < n - 1:
-                if text[i] == '*' and text[i + 1] == '/':
-                    result.append((i, ' '))
-                    result.append((i + 1, ' '))
+                if text[i] == "*" and text[i + 1] == "/":
+                    result.append((i, " "))
+                    result.append((i + 1, " "))
                     i += 2
                     break
-                result.append((i, ' '))
+                result.append((i, " "))
                 i += 1
             else:
                 i = n
         elif ch == "'":
-            result.append((i, ' '))
+            result.append((i, " "))
             i += 1
             while i < n:
-                if text[i] == '\\':
-                    result.append((i, ' '))
+                if text[i] == "\\":
+                    result.append((i, " "))
                     i += 1
                     if i < n:
-                        result.append((i, ' '))
+                        result.append((i, " "))
                         i += 1
                 elif text[i] == "'":
-                    result.append((i, ' '))
+                    result.append((i, " "))
                     i += 1
                     break
                 else:
-                    result.append((i, ' '))
+                    result.append((i, " "))
                     i += 1
         else:
             result.append((i, ch))
@@ -90,6 +89,7 @@ def _skip_strings_and_comments(text: str) -> list[tuple[int, str]]:
 @dataclass
 class Block:
     """A self-contained block of decompiled code with balanced braces."""
+
     id: str
     label: str  # e.g. "entry", "if_0", "else_0", "loop_0", "exit"
     decompiled_text: str  # raw decompiled code for this block
@@ -223,11 +223,13 @@ def split_decompiled_function(decompiled: str, max_block_lines: int = MAX_BLOCK_
             return
         text = "\n".join(current_lines).strip()
         if text:
-            blocks.append(Block(
-                id=f"b{block_idx}",
-                label=current_label,
-                decompiled_text=text,
-            ))
+            blocks.append(
+                Block(
+                    id=f"b{block_idx}",
+                    label=current_label,
+                    decompiled_text=text,
+                )
+            )
             block_idx += 1
         current_lines.clear()
 
@@ -285,11 +287,13 @@ def split_decompiled_function(decompiled: str, max_block_lines: int = MAX_BLOCK_
                 block_lines = current_lines[:split_at]
                 text = "\n".join(block_lines).strip()
                 if text:
-                    blocks.append(Block(
-                        id=f"b{block_idx}",
-                        label=current_label,
-                        decompiled_text=text,
-                    ))
+                    blocks.append(
+                        Block(
+                            id=f"b{block_idx}",
+                            label=current_label,
+                            decompiled_text=text,
+                        )
+                    )
                     block_idx += 1
                 current_lines = current_lines[split_at:]
                 current_label = f"part_{branch_idx}"
@@ -330,7 +334,7 @@ def _safe_midpoint_split(lines: list[str]) -> int:
         stripped = line.rstrip()
         code_part = stripped.split("//")[0].rstrip()
         if i >= midpoint and depth == 0 and (code_part.endswith(";") or code_part.endswith("}")):
-                return i + 1
+            return i + 1
     return -1
 
 

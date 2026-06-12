@@ -1,4 +1,5 @@
 """Tests for core data models."""
+
 from __future__ import annotations
 
 from re_agent.core.models import (

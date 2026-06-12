@@ -1,4 +1,5 @@
 """Single function reversal pipeline."""
+
 from __future__ import annotations
 
 import logging
@@ -54,7 +55,10 @@ def reverse_single(
             line_count = decompiled_line_count(decompile.raw_output)
             if line_count >= config.orchestrator.block_threshold_lines:
                 block_kwargs = dict(
-                    target=target, backend=backend, llm=llm, block_llm=block_llm,
+                    target=target,
+                    backend=backend,
+                    llm=llm,
+                    block_llm=block_llm,
                     block_threshold_lines=config.orchestrator.block_threshold_lines,
                     max_block_lines=config.orchestrator.block_max_lines,
                     max_fix_rounds=config.orchestrator.max_review_rounds,
@@ -69,28 +73,31 @@ def reverse_single(
                 #   500-1000 lines: flash block first, fall back to standard pipeline on FAIL
                 #   1000+    lines: flash block with skip_checker+skip_var_mapping only
                 if line_count > 1000:
-                    logger.info("%s: %d lines — very large: flash block only",
-                                target.address, line_count)
+                    logger.info("%s: %d lines — very large: flash block only", target.address, line_count)
                     block_result = reverse_blocks(
                         **block_kwargs,  # type: ignore
                         fast_mode=True,
-                        skip_checker=True, skip_var_mapping=True,
+                        skip_checker=True,
+                        skip_var_mapping=True,
                     )
                 elif line_count > 500:
-                    logger.info("%s: %d lines — large: flash block, fallback to standard",
-                                target.address, line_count)
+                    logger.info("%s: %d lines — large: flash block, fallback to standard", target.address, line_count)
                     block_result = reverse_blocks(
                         **block_kwargs,  # type: ignore
                         fast_mode=True,
-                        skip_checker=True, skip_var_mapping=True,
+                        skip_checker=True,
+                        skip_var_mapping=True,
                     )
                     if not block_result.success:
-                        logger.info("%s: flash block FAIL — falling back to standard",
-                                target.address)
+                        logger.info("%s: flash block FAIL — falling back to standard", target.address)
                         block_result = run_fix_loop(
-                            target=target, backend=backend, reverser_llm=llm, checker_llm=llm,
+                            target=target,
+                            backend=backend,
+                            reverser_llm=llm,
+                            checker_llm=llm,
                             max_rounds=config.orchestrator.max_review_rounds,
-                            log_dir=log_dir, optimize=config.orchestrator.optimize,
+                            log_dir=log_dir,
+                            optimize=config.orchestrator.optimize,
                             objective_verifier_enabled=config.orchestrator.objective_verifier_enabled,
                             objective_call_count_tolerance=config.orchestrator.objective_call_count_tolerance,
                             objective_control_flow_tolerance=config.orchestrator.objective_control_flow_tolerance,
@@ -108,7 +115,8 @@ def reverse_single(
         except Exception:
             logger.warning(
                 "%s: block reversal crashed, falling back to standard pipeline",
-                target.address, exc_info=True,
+                target.address,
+                exc_info=True,
             )
             block_result = None
 

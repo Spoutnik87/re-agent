@@ -1,4 +1,5 @@
 """Class-level auto-advance orchestrator."""
+
 from __future__ import annotations
 
 import logging
@@ -62,8 +63,7 @@ def reverse_class(
             break
 
         print(
-            f"[{fn_idx}/{limit}] Reversing {target.class_name}::{target.function_name} "
-            f"({target.address})...",
+            f"[{fn_idx}/{limit}] Reversing {target.class_name}::{target.function_name} ({target.address})...",
             file=sys.stderr,
         )
 

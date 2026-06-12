@@ -1,4 +1,5 @@
 """OpenAI-compatible LLM provider implementation."""
+
 from __future__ import annotations
 
 import logging
@@ -52,9 +53,7 @@ class OpenAIProvider:
 
     def send(self, messages: list[Message], **kwargs: Any) -> str:
         """Send messages via the chat completions API and return the response."""
-        api_messages: list[dict[str, str]] = [
-            {"role": m.role, "content": m.content} for m in messages
-        ]
+        api_messages: list[dict[str, str]] = [{"role": m.role, "content": m.content} for m in messages]
 
         response = self._call_with_retry(
             self._client.chat.completions.create,
@@ -75,8 +74,12 @@ class OpenAIProvider:
         for attempt in range(_RETRY_COUNT):
             try:
                 return fn(**kwargs)
-            except (openai.RateLimitError, openai.APIConnectionError,
-                    openai.InternalServerError, openai.APITimeoutError):
+            except (
+                openai.RateLimitError,
+                openai.APIConnectionError,
+                openai.InternalServerError,
+                openai.APITimeoutError,
+            ):
                 if attempt == _RETRY_COUNT - 1:
                     raise
                 _logger.warning("OpenAI API call attempt %d failed, retrying in %.1fs", attempt + 1, delay)

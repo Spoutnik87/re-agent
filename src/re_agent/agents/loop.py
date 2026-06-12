@@ -1,4 +1,5 @@
 """Fix loop — reverser -> checker -> fix, bounded by max rounds."""
+
 from __future__ import annotations
 
 import json
@@ -68,9 +69,7 @@ def run_fix_loop(
 
     project_desc = project_profile.project_description if project_profile else ""
     checker_rules = project_profile.checker_custom_rules if project_profile else ""
-    checker = CheckerAgent(checker_llm, backend,
-                           project_description=project_desc,
-                           checker_custom_rules=checker_rules)
+    checker = CheckerAgent(checker_llm, backend, project_description=project_desc, checker_custom_rules=checker_rules)
 
     if log_dir:
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -116,7 +115,8 @@ def run_fix_loop(
         if optimize and round_num == 1:
             cached_decompile = reverser.last_decompile_result
         verdict = checker.check(
-            code, target,
+            code,
+            target,
             decompile_result=cached_decompile if optimize else None,
         )
         last_verdict = verdict
@@ -150,9 +150,7 @@ def run_fix_loop(
             check_path = log_dir / f"round{round_num}-{timestamp}-checker.json"
             check_path.write_text(json.dumps(check_log, indent=2), encoding="utf-8")
 
-        if verdict.verdict == Verdict.PASS and (
-            objective_verdict is None or objective_verdict.verdict != Verdict.FAIL
-        ):
+        if verdict.verdict == Verdict.PASS and (objective_verdict is None or objective_verdict.verdict != Verdict.FAIL):
             cleanup_loop(reverser, checker)
             return ReversalResult(
                 target=target,

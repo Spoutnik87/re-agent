@@ -1,4 +1,5 @@
 """re-agent status command — show reversal progress."""
+
 from __future__ import annotations
 
 import argparse
@@ -28,12 +29,12 @@ def cmd_status(args: argparse.Namespace) -> int:
         print("| Address | Class | Function | Status | Rounds | Time |")
         print("|---------|-------|----------|--------|--------|------|")
         for r in rows:
-            addr = r['address']
-            cls = r['class']
-            fn = r['function']
-            st = r['status']
-            rds = r['rounds']
-            ts = r['timestamp']
+            addr = r["address"]
+            cls = r["class"]
+            fn = r["function"]
+            st = r["status"]
+            rds = r["rounds"]
+            ts = r["timestamp"]
             print(f"| {addr} | {cls} | {fn} | {st} | {rds} | {ts} |")
         return 0
 

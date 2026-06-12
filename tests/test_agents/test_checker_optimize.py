@@ -1,4 +1,5 @@
 """Tests for CheckerAgent with cached DecompileResult."""
+
 from __future__ import annotations
 
 from re_agent.agents.checker import CheckerAgent
@@ -8,9 +9,7 @@ from re_agent.llm.protocol import Message
 
 class CheckerRecordingLLM:
     def __init__(self) -> None:
-        self.response = (
-            "VERDICT: PASS\nSUMMARY: All good\nISSUES:\n- none\nFIX_INSTRUCTIONS:\n- none"
-        )
+        self.response = "VERDICT: PASS\nSUMMARY: All good\nISSUES:\n- none\nFIX_INSTRUCTIONS:\n- none"
         self.sent_messages: list[list[Message]] = []
         self.supports_conv = False
 
@@ -38,6 +37,7 @@ class DecompileCountingBackend:
     def capabilities(self) -> object:
         class _Caps:
             pass
+
         return _Caps()
 
     def decompile(self, target: str) -> DecompileResult:

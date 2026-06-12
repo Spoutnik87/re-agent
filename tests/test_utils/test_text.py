@@ -1,4 +1,5 @@
 """Tests for text utilities including strip_ghidra_noise."""
+
 from __future__ import annotations
 
 from re_agent.utils.text import strip_comments, strip_ghidra_noise

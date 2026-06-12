@@ -1,4 +1,5 @@
 """Subprocess execution utilities."""
+
 from __future__ import annotations
 
 import subprocess
@@ -32,9 +33,7 @@ def run_cmd(args: Sequence[str], timeout_s: int = 45) -> tuple[bool, str]:
         return False, f"Command not found: {args[0]}"
 
 
-def run_cmd_split(
-    args: Sequence[str], timeout_s: int = 45
-) -> tuple[int, str, str]:
+def run_cmd_split(args: Sequence[str], timeout_s: int = 45) -> tuple[int, str, str]:
     """Run a command and return ``(returncode, stdout, stderr)`` separately.
 
     Unlike :func:`run_cmd`, this keeps stdout and stderr in separate streams

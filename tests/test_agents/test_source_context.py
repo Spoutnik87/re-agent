@@ -1,4 +1,5 @@
 """Tests for source-context retrieval in the reverser."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -36,11 +37,13 @@ class StubBackendForPrompt:
         class _Caps:
             has_xrefs = False
             has_structs = False
+
         return _Caps()
 
     def decompile(self, target: str) -> object:
         class _Dec:
             raw_output = "void CTrain::ProcessControl() { UpdateTrainNodes(); }"
+
         return _Dec()
 
 
@@ -75,12 +78,14 @@ void CTrain::UpdateTrainNodes() {
     code_dir.mkdir(parents=True)
     generated_path = code_dir / "0x6F5900_CTrain_Shutdown.cpp"
     generated_path.write_text("void CTrain::Shutdown() { plugin::CallMethod<0x6F5900, CTrain*>(this); }\n")
-    session.record_result(ReversalResult(
-        target=FunctionTarget(address="0x6F5900", class_name="CTrain", function_name="Shutdown"),
-        code="void CTrain::Shutdown() { plugin::CallMethod<0x6F5900, CTrain*>(this); }",
-        rounds_used=1,
-        success=True,
-    ))
+    session.record_result(
+        ReversalResult(
+            target=FunctionTarget(address="0x6F5900", class_name="CTrain", function_name="Shutdown"),
+            code="void CTrain::Shutdown() { plugin::CallMethod<0x6F5900, CTrain*>(this); }",
+            rounds_used=1,
+            success=True,
+        )
+    )
 
     llm = RecordingLLM(
         "```cpp\nvoid CTrain::ProcessControl() { UpdateTrainNodes(); }\n```\n"

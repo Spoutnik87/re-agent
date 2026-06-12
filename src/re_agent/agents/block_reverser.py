@@ -1,4 +1,5 @@
 """Block-level reverser — reverses individual blocks within a larger function."""
+
 from __future__ import annotations
 
 import hashlib
@@ -193,8 +194,7 @@ class SkeletonGenerator:
                 if struct:
                     structs_text = f"{struct.name} (size: {struct.size})\n"
                     structs_text += "\n".join(
-                        f"  +0x{f.offset:X} {f.type_str} {f.name} (size: {f.size})"
-                        for f in struct.fields
+                        f"  +0x{f.offset:X} {f.type_str} {f.name} (size: {f.size})" for f in struct.fields
                     )
             except Exception:
                 structs_text = "Unavailable"

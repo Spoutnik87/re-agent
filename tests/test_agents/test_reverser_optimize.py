@@ -1,4 +1,5 @@
 """Tests for ReverserAgent optimize mode."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -40,14 +41,13 @@ class GReverserStubBackend:
         class _Caps:
             has_xrefs = False
             has_structs = False
+
         return _Caps()
 
     def decompile(self, target: str) -> object:
         class _Dec:
-            raw_output = (
-                "/* WARNING: Could not resolve indirect call */\n"
-                "void CTest::foo() { bar(); }\n"
-            )
+            raw_output = "/* WARNING: Could not resolve indirect call */\nvoid CTest::foo() { bar(); }\n"
+
         return _Dec()
 
 
@@ -162,11 +162,13 @@ class EmptySourceBackend:
         class _Caps:
             has_xrefs = False
             has_structs = False
+
         return _Caps()
 
     def decompile(self, target: str) -> object:
         class _Dec:
             raw_output = "void CTest::foo() { bar(); }\n"
+
         return _Dec()
 
 

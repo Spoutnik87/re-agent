@@ -1,4 +1,5 @@
 """Tests for block_reverser token optimization: reversed_blocks cap and conversation reset."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -69,7 +70,10 @@ def test_reversed_blocks_capped_to_3() -> None:
     block = _make_block("b5", "new_block", "int f = 6;")
 
     agent.reverse_block(
-        block=block, class_name="Foo", function_name="bar", address="0x1000",
+        block=block,
+        class_name="Foo",
+        function_name="bar",
+        address="0x1000",
         reversed_blocks=reversed_blocks,
     )
 
@@ -95,7 +99,10 @@ def test_reversed_blocks_fewer_than_3_shows_all() -> None:
     block = _make_block("b2", "last_block", "int c = 3;")
 
     agent.reverse_block(
-        block=block, class_name="Foo", function_name="bar", address="0x1000",
+        block=block,
+        class_name="Foo",
+        function_name="bar",
+        address="0x1000",
         reversed_blocks=reversed_blocks,
     )
 

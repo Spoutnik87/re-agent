@@ -1,4 +1,5 @@
 """Top-level parity engine — runs all signals and aggregates results."""
+
 from __future__ import annotations
 
 import csv
@@ -41,6 +42,7 @@ def _safe_bool(value: str, default: bool) -> bool:
         logger.warning("Invalid bool value in CSV: %r, using default %s", value, default)
         return default
 
+
 HOOK_ADDR_RE = re.compile(r"^0x[0-9a-fA-F]+$")
 
 
@@ -76,14 +78,16 @@ def read_hooks(path: Path, include_unreversed: bool = False) -> list[HookEntry]:
                 else:
                     fn_name = full_name
 
-            out.append(HookEntry(
-                class_path=class_path,
-                fn_name=fn_name,
-                address=addr.lower(),
-                reversed=rev,
-                locked=_safe_bool(row.get("locked", ""), False),
-                is_virtual=_safe_bool(row.get("is_virtual", ""), False),
-            ))
+            out.append(
+                HookEntry(
+                    class_path=class_path,
+                    fn_name=fn_name,
+                    address=addr.lower(),
+                    reversed=rev,
+                    locked=_safe_bool(row.get("locked", ""), False),
+                    is_virtual=_safe_bool(row.get("is_virtual", ""), False),
+                )
+            )
     return out
 
 
@@ -194,11 +198,13 @@ def run_parity(
 
         if addr_key in manual_checks:
             mc = manual_checks[addr_key]
-            results.append({
-                "hook": entry,
-                "status": ParityStatus.GREEN,
-                "findings": [Finding(level="info", reason=f"Manual check override: {mc.note}")],
-            })
+            results.append(
+                {
+                    "hook": entry,
+                    "status": ParityStatus.GREEN,
+                    "findings": [Finding(level="info", reason=f"Manual check override: {mc.note}")],
+                }
+            )
             continue
 
         # Try address-based lookup first (uses hook_patterns index),
@@ -220,12 +226,14 @@ def run_parity(
                 logger.warning("Failed to fetch Ghidra data for %s", entry.address, exc_info=True)
 
         status, findings = score_single(entry, source, ghidra, parity_cfg, semantic_rules)
-        results.append({
-            "hook": entry,
-            "status": status,
-            "findings": findings,
-            "source": source,
-            "ghidra": ghidra,
-        })
+        results.append(
+            {
+                "hook": entry,
+                "status": status,
+                "findings": findings,
+                "source": source,
+                "ghidra": ghidra,
+            }
+        )
 
     return results

@@ -1,4 +1,5 @@
 """Progress tracking wrapper around Session."""
+
 from __future__ import annotations
 
 from re_agent.core.session import Session
@@ -39,12 +40,14 @@ class ProgressTracker:
             funcs = [f for f in funcs if f.get("class_name") == class_name]
         rows = []
         for f in funcs:
-            rows.append({
-                "address": f.get("address", ""),
-                "class": f.get("class_name", ""),
-                "function": f.get("function_name", ""),
-                "status": "PASS" if f.get("success") else "FAIL",
-                "rounds": str(f.get("rounds_used", "")),
-                "timestamp": f.get("timestamp", ""),
-            })
+            rows.append(
+                {
+                    "address": f.get("address", ""),
+                    "class": f.get("class_name", ""),
+                    "function": f.get("function_name", ""),
+                    "status": "PASS" if f.get("success") else "FAIL",
+                    "rounds": str(f.get("rounds_used", "")),
+                    "timestamp": f.get("timestamp", ""),
+                }
+            )
         return rows

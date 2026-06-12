@@ -1,4 +1,5 @@
 """Configuration loader for re-agent."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -35,8 +36,7 @@ def _load_yaml_file(path: Path) -> dict[str, Any]:
         import yaml  # type: ignore[import-untyped]
     except ImportError as err:
         raise ImportError(
-            "PyYAML is required for loading YAML config files. "
-            "Install it with: pip install pyyaml"
+            "PyYAML is required for loading YAML config files. Install it with: pip install pyyaml"
         ) from err
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
@@ -131,7 +131,9 @@ def _build_with_coercion(cls: type[_T], data: dict[str, Any]) -> _T:
         else:
             _log.warning(
                 "Unknown config key '%s' in %s (known: %s) — ignored",
-                k, cls.__name__, ", ".join(sorted(known)),
+                k,
+                cls.__name__,
+                ", ".join(sorted(known)),
             )
     return cls(**filtered)
 

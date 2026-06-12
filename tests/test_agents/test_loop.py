@@ -1,4 +1,5 @@
 """Tests for the agent fix loop."""
+
 from __future__ import annotations
 
 from re_agent.agents.loop import run_fix_loop
@@ -58,8 +59,7 @@ def test_loop_pass_first_round(tmp_path: object) -> None:
     backend = StubBackend()
 
     reverser_resp = (
-        "```cpp\nvoid CTrain::ProcessControl() { }\n```\n"
-        "REVERSED_FUNCTION: CTrain::ProcessControl (0x6F86A0)"
+        "```cpp\nvoid CTrain::ProcessControl() { }\n```\nREVERSED_FUNCTION: CTrain::ProcessControl (0x6F86A0)"
     )
     checker_resp = "VERDICT: PASS\nSUMMARY: All good\nISSUES:\n- none\nFIX_INSTRUCTIONS:\n- none"
 
@@ -136,11 +136,13 @@ void CTrain::ProcessControl() {
         )
 
     def get_asm(self, target: str) -> AsmResult | None:
-        instructions = "\n".join([
-            "00400000 CALL FuncA",
-            "00400004 CALL FuncB",
-            "00400008 CALL FuncC",
-        ])
+        instructions = "\n".join(
+            [
+                "00400000 CALL FuncA",
+                "00400004 CALL FuncB",
+                "00400008 CALL FuncC",
+            ]
+        )
         return AsmResult(
             address=target,
             instructions=instructions,
@@ -155,8 +157,7 @@ def test_loop_objective_verifier_blocks_false_pass() -> None:
     backend = StructuralBackend()
 
     reverser_responses = [
-        "```cpp\nvoid CTrain::ProcessControl() { }\n```\n"
-        "REVERSED_FUNCTION: CTrain::ProcessControl (0x6F86A0)",
+        "```cpp\nvoid CTrain::ProcessControl() { }\n```\nREVERSED_FUNCTION: CTrain::ProcessControl (0x6F86A0)",
         "```cpp\nvoid CTrain::ProcessControl() { if (m_nState) { FuncA(); FuncB(); FuncC(); } }\n```\n"
         "REVERSED_FUNCTION: CTrain::ProcessControl (0x6F86A0)",
     ]
@@ -178,6 +179,7 @@ def test_loop_objective_verifier_blocks_false_pass() -> None:
 # ---------------------------------------------------------------------------
 # Optimize mode tests
 # ---------------------------------------------------------------------------
+
 
 class DecompileTrackingBackend(StubBackend):
     """A stub backend that tracks how many times decompile() is called."""
@@ -238,11 +240,13 @@ void CTrain::ProcessControl() {
         )
 
     def get_asm(self, target: str) -> AsmResult | None:
-        instructions = "\n".join([
-            "00400000 CALL FuncA",
-            "00400004 CALL FuncB",
-            "00400008 CALL FuncC",
-        ])
+        instructions = "\n".join(
+            [
+                "00400000 CALL FuncA",
+                "00400004 CALL FuncB",
+                "00400008 CALL FuncC",
+            ]
+        )
         return AsmResult(
             address=target,
             instructions=instructions,
@@ -269,8 +273,13 @@ def test_optimize_caches_decompile_and_avoids_double_call() -> None:
     rev_llm = NonConvMockLLM([reverser_resp])
     chk_llm = NonConvMockLLM([checker_resp])
     result = run_fix_loop(
-        target, backend, rev_llm, chk_llm, max_rounds=3,
-        optimize=True, objective_verifier_enabled=False,
+        target,
+        backend,
+        rev_llm,
+        chk_llm,
+        max_rounds=3,
+        optimize=True,
+        objective_verifier_enabled=False,
     )
 
     assert result.success
@@ -291,8 +300,13 @@ def test_non_optimize_calls_decompile_twice() -> None:
     rev_llm = NonConvMockLLM([reverser_resp])
     chk_llm = NonConvMockLLM([checker_resp])
     result = run_fix_loop(
-        target, backend, rev_llm, chk_llm, max_rounds=3,
-        optimize=False, objective_verifier_enabled=False,
+        target,
+        backend,
+        rev_llm,
+        chk_llm,
+        max_rounds=3,
+        optimize=False,
+        objective_verifier_enabled=False,
     )
 
     assert result.success
@@ -305,10 +319,8 @@ def test_optimize_fix_rounds_use_fresh_send() -> None:
     target = FunctionTarget(address="0x6F86A0", class_name="CTrain", function_name="ProcessControl")
 
     reverser_responses = [
-        "```cpp\nvoid CTrain::ProcessControl() { /*v1*/ }\n```\n"
-        "REVERSED_FUNCTION: CTrain::ProcessControl (0x6F86A0)",
-        "```cpp\nvoid CTrain::ProcessControl() { /*v2*/ }\n```\n"
-        "REVERSED_FUNCTION: CTrain::ProcessControl (0x6F86A0)",
+        "```cpp\nvoid CTrain::ProcessControl() { /*v1*/ }\n```\nREVERSED_FUNCTION: CTrain::ProcessControl (0x6F86A0)",
+        "```cpp\nvoid CTrain::ProcessControl() { /*v2*/ }\n```\nREVERSED_FUNCTION: CTrain::ProcessControl (0x6F86A0)",
     ]
     checker_responses = [
         "VERDICT: FAIL\nSUMMARY: Bad\nISSUES:\n- fixit\nFIX_INSTRUCTIONS:\n- fixit",
@@ -318,17 +330,20 @@ def test_optimize_fix_rounds_use_fresh_send() -> None:
     rev_llm = MockLLM(reverser_responses)
     chk_llm = NonConvMockLLM(checker_responses)
     result = run_fix_loop(
-        target, backend, rev_llm, chk_llm, max_rounds=3,
-        optimize=True, objective_verifier_enabled=False,
+        target,
+        backend,
+        rev_llm,
+        chk_llm,
+        max_rounds=3,
+        optimize=True,
+        objective_verifier_enabled=False,
     )
 
     assert result.success
     assert result.rounds_used == 2
     # Verify the fix round sent fresh messages (not resume) and included issues
     assert len(rev_llm.send_calls) >= 1
-    all_send_content = " ".join(
-        msg.content for call in rev_llm.send_calls for msg in call
-    )
+    all_send_content = " ".join(msg.content for call in rev_llm.send_calls for msg in call)
     assert "fixit" in all_send_content
 
 
@@ -341,8 +356,7 @@ def test_optimize_loop_with_objective_verifier() -> None:
     target = FunctionTarget(address="0x6F86A0", class_name="CTrain", function_name="ProcessControl")
 
     reverser_responses = [
-        "```cpp\nvoid CTrain::ProcessControl() { }\n```\n"
-        "REVERSED_FUNCTION: CTrain::ProcessControl (0x6F86A0)",
+        "```cpp\nvoid CTrain::ProcessControl() { }\n```\nREVERSED_FUNCTION: CTrain::ProcessControl (0x6F86A0)",
         "```cpp\nvoid CTrain::ProcessControl() { if (m_nState) { FuncA(); FuncB(); FuncC(); } }\n```\n"
         "REVERSED_FUNCTION: CTrain::ProcessControl (0x6F86A0)",
     ]
@@ -359,4 +373,3 @@ def test_optimize_loop_with_objective_verifier() -> None:
     assert result.rounds_used == 2
     assert result.objective_verdict is not None
     assert result.objective_verdict.verdict == Verdict.PASS
-

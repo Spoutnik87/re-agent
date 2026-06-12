@@ -1,4 +1,5 @@
 """Text analysis utilities for C++ source and assembly."""
+
 from __future__ import annotations
 
 import re
@@ -82,7 +83,8 @@ FP_ASM_PREFIXES: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 GHIDRA_BOILERPLATE_STARTS = (
-    "/* WARNING:", "// WARNING:",
+    "/* WARNING:",
+    "// WARNING:",
 )
 
 

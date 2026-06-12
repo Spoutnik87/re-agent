@@ -1,4 +1,5 @@
 """Conservative structural verification that does not rely on an LLM."""
+
 from __future__ import annotations
 
 from re_agent.backend.protocol import REBackend
@@ -67,8 +68,7 @@ def verify_candidate(
             call_diff = abs(asm.call_count - source_call_count)
             if call_diff >= call_count_tolerance and source_call_count < asm.call_count:
                 findings.append(
-                    f"ASM call mismatch: disassembly has {asm.call_count} calls, "
-                    f"candidate has {source_call_count}"
+                    f"ASM call mismatch: disassembly has {asm.call_count} calls, candidate has {source_call_count}"
                 )
 
     if findings:
@@ -95,4 +95,4 @@ def _extract_body(text: str) -> str:
     close_brace = text.rfind("}")
     if open_brace == -1 or close_brace == -1 or close_brace <= open_brace:
         return text
-    return text[open_brace:close_brace + 1]
+    return text[open_brace : close_brace + 1]

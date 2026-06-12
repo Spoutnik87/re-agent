@@ -1,4 +1,5 @@
 """Codex CLI-backed LLM provider using ChatGPT login credentials."""
+
 from __future__ import annotations
 
 import logging
@@ -74,9 +75,7 @@ class CodexCLIProvider:
                 check=False,
             )
             if proc.returncode != 0:
-                raise RuntimeError(
-                    f"codex exec failed with exit code {proc.returncode}\n{proc.stdout}"
-                )
+                raise RuntimeError(f"codex exec failed with exit code {proc.returncode}\n{proc.stdout}")
             return out_path.read_text(encoding="utf-8")
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"codex exec timed out after {self._timeout_s}s") from exc

@@ -1,4 +1,5 @@
 """Tests for single function orchestrator."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -37,6 +38,7 @@ def test_reverse_single_passes_optimize_to_loop(tmp_path: Path, monkeypatch: pyt
         nonlocal called_kwargs
         called_kwargs = kwargs
         from re_agent.core.models import CheckerVerdict, ReversalResult, Verdict
+
         return ReversalResult(
             target=kwargs["target"],
             code="code",
@@ -52,8 +54,10 @@ def test_reverse_single_passes_optimize_to_loop(tmp_path: Path, monkeypatch: pyt
 
     class FakeLLM:
         supports_conversations = False
+
     class FakeSession:
-        def record_result(self, *args: object, **kwargs: object) -> None: pass
+        def record_result(self, *args: object, **kwargs: object) -> None:
+            pass
 
     reverse_single(
         target=FunctionTarget(address="0x123", class_name="CTest", function_name="func"),
@@ -84,6 +88,7 @@ def test_reverse_single_respects_optimize_false(tmp_path: Path, monkeypatch: pyt
         nonlocal called_kwargs
         called_kwargs = kwargs
         from re_agent.core.models import CheckerVerdict, ReversalResult, Verdict
+
         return ReversalResult(
             target=kwargs["target"],
             code="code",
@@ -99,8 +104,10 @@ def test_reverse_single_respects_optimize_false(tmp_path: Path, monkeypatch: pyt
 
     class FakeLLM:
         supports_conversations = False
+
     class FakeSession:
-        def record_result(self, *args: object, **kwargs: object) -> None: pass
+        def record_result(self, *args: object, **kwargs: object) -> None:
+            pass
 
     reverse_single(
         target=FunctionTarget(address="0x123", class_name="CTest", function_name="func"),
