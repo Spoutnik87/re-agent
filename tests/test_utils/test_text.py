@@ -41,7 +41,6 @@ void __fastcall CEntity::Render(CEntity *this) {
 }
 """
     result = strip_ghidra_noise(raw)
-    lines = result.splitlines()
     assert "void __fastcall CEntity::Render" in result
     assert "this->m_pModel->Draw()" in result
     assert "return;" in result

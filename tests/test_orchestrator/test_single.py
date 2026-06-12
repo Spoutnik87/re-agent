@@ -1,8 +1,9 @@
 """Tests for single function orchestrator."""
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from re_agent.config.schema import ReAgentConfig
 from re_agent.core.models import FunctionTarget
