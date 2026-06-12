@@ -114,6 +114,7 @@ def test_fix_uses_fresh_send_in_optimize_mode() -> None:
     assert msg[0].role == "system"
     assert msg[1].role == "user"
     assert "checker_report" not in msg[1].content  # no longer sent (triple-send fix)
+    assert "checker_report" not in msg[0].content  # also not in system prompt
     assert "add if check" in msg[1].content
     assert "missing branch" in msg[1].content.lower()
 

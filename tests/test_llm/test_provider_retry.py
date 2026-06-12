@@ -26,6 +26,7 @@ class FailingProvider:
         return True
 
     def new_conversation(self, system: str) -> str:
+        self._conversations["conv-1"] = [Message(role="system", content=system)]
         return "conv-1"
 
     def resume(self, conversation_id: str, message: str) -> str:

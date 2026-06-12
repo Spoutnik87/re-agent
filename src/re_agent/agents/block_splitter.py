@@ -238,9 +238,10 @@ def split_decompiled_function(decompiled: str, max_block_lines: int = MAX_BLOCK_
                 current_lines.append(line)
             continue
 
-        # Track brace depth changes for this line
-        opens = line.count("{")
-        closes = line.count("}")
+        # Track brace depth changes for this line (skip strings/comments)
+        clean = _skip_strings_and_comments(line)
+        opens = sum(1 for _, c in clean if c == "{")
+        closes = sum(1 for _, c in clean if c == "}")
         new_depth = depth + opens - closes
 
         cf_match = CONTROL_FLOW_KW_RE.match(line)
@@ -313,19 +314,6 @@ def split_decompiled_function(decompiled: str, max_block_lines: int = MAX_BLOCK_
     )
 
 
-def _find_inner_split(lines: list[str], current_depth: int) -> int:
-    """Find a safe split point inside a large block at the given depth."""
-    inner_depth = 0
-    for i, line in enumerate(lines[3:], start=3):  # skip first few lines
-        opens = line.count("{")
-        closes = line.count("}")
-        inner_depth += opens - closes
-        stripped = line.strip()
-        if inner_depth == 1 and CONTROL_FLOW_KW_RE.match(stripped):
-            return i
-    return -1
-
-
 def _safe_midpoint_split(lines: list[str]) -> int:
     """Split a large block at the approximate midpoint where braces are balanced.
 
@@ -340,7 +328,8 @@ def _safe_midpoint_split(lines: list[str]) -> int:
     for i, line in enumerate(lines):
         depth += line.count("{") - line.count("}")
         stripped = line.rstrip()
-        if i >= midpoint and depth == 0 and (stripped.endswith(";") or stripped.endswith("}")):
+        code_part = stripped.split("//")[0].rstrip()
+        if i >= midpoint and depth == 0 and (code_part.endswith(";") or code_part.endswith("}")):
                 return i + 1
     return -1
 
@@ -451,7 +440,7 @@ def extract_variable_context(decompiled: str, signature: str) -> str:
             continue
         if CONTROL_FLOW_KW_RE.match(stripped) or RETURN_RE.match(stripped):
             break
-        if ";" in stripped and "(" not in stripped or VARIABLE_DECL_RE.match(stripped):
+        if VARIABLE_DECL_RE.match(stripped) or (";" in stripped and "(" not in stripped):
             decls.append(lines[j])
         else:
             break

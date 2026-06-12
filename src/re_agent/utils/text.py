@@ -81,12 +81,6 @@ FP_ASM_PREFIXES: tuple[str, ...] = (
 # Functions
 # ---------------------------------------------------------------------------
 
-GHIDRA_BOILERPLATE_LINES = (
-    "/* WARNING:", "/* WARNING:", "/* WARNING:",
-    "/* WARNING:", "Could not recover", "Too many branches",
-    "// WARNING:", "// WARNING:", "undefined8", "undefined4",
-    "longlong", "ulonglong",
-)
 GHIDRA_BOILERPLATE_STARTS = (
     "/* WARNING:", "// WARNING:",
 )

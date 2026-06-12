@@ -41,9 +41,6 @@ class RecursiveDecomposer:
         )
         self._block_agent = BlockReverserAgent(_block_llm, project_description=project_description)
 
-    def should_decompose(self, decompiled: str) -> bool:
-        return decompiled_line_count(decompiled) >= RECURSIVE_THRESHOLD
-
     def should_split_block(self, block: Block) -> bool:
         return decompiled_line_count(block.decompiled_text) >= BLOCK_RECURSIVE_THRESHOLD
 
@@ -63,8 +60,21 @@ class RecursiveDecomposer:
         # Step 1: Get decomposition plan from LLM
         plan = self._get_decomposition_plan(decompiled, line_count)
         if not plan:
-            # Fallback: treat as single block
-            return ""
+            # Fallback: reverse entire function as a single block
+            block = Block(
+                id="b0",
+                label="entry",
+                decompiled_text=decompiled,
+                comment="Full function (decomposition failed)",
+            )
+            return self._block_agent.reverse_block(
+                block=block,
+                class_name=class_name,
+                function_name=function_name,
+                address=address,
+                full_decompiled="",
+                reversed_blocks={},
+            )
 
         lines = decompiled.splitlines()
         sub_sections: list[tuple[str, str, str]] = []  # (section_id, description, decompiled_text)

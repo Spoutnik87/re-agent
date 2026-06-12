@@ -47,6 +47,13 @@ def _make_block(block_id: str, label: str, text: str) -> Block:
     return Block(id=block_id, label=label, decompiled_text=text, comment="")
 
 
+def _get_last_user_msg(provider: CapturingProvider) -> str:
+    for msg in provider.sent_messages[-1]:
+        if msg.role == "user":
+            return msg.content
+    return ""
+
+
 def test_reversed_blocks_capped_to_3() -> None:
     """Only the last 3 blocks appear in context; earlier ones are dropped."""
     provider = CapturingProvider()
@@ -67,12 +74,7 @@ def test_reversed_blocks_capped_to_3() -> None:
     )
 
     assert len(provider.sent_messages) > 0
-    user_msg = provider.sent_messages[-1][-1].content if provider.sent_messages[-1] else ""
-    if not user_msg:
-        for msg in provider.sent_messages[-1]:
-            if msg.role == "user":
-                user_msg = msg.content
-                break
+    user_msg = _get_last_user_msg(provider)
     # Should mention b2, b3, b4 (last 3) but NOT b0 or b1
     assert "b2" in user_msg
     assert "b3" in user_msg
@@ -97,11 +99,7 @@ def test_reversed_blocks_fewer_than_3_shows_all() -> None:
         reversed_blocks=reversed_blocks,
     )
 
-    user_msg = ""
-    for msg in provider.sent_messages[-1]:
-        if msg.role == "user":
-            user_msg = msg.content
-            break
+    user_msg = _get_last_user_msg(provider)
     assert "b0" in user_msg
     assert "b1" in user_msg
 
@@ -139,3 +137,7 @@ def test_reset_conversation_between_blocks_uses_new_conversation() -> None:
     assert second_conv_id is not None
     # Since reset clears and provider returns same "cap-conv", the ID may be same
     # but the conversation history should be fresh (no previous block context)
+
+    # Verify the second conversation is fresh — no context from first block
+    second_user_msg = _get_last_user_msg(provider)
+    assert "int x = 1;" not in second_user_msg

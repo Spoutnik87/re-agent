@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from pathlib import Path
 
 from re_agent.config.schema import ReAgentConfig
 from re_agent.core.models import FunctionTarget
@@ -19,7 +20,7 @@ def test_dry_run_smoke() -> None:
     assert config.orchestrator.max_review_rounds == 4
 
 
-def test_reverse_single_passes_optimize_to_loop(tmp_path: object, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reverse_single_passes_optimize_to_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """reverse_single should pass config.orchestrator.optimize to run_fix_loop."""
     from re_agent.backend.stub import StubBackend
     from re_agent.orchestrator.single import reverse_single
@@ -66,7 +67,7 @@ def test_reverse_single_passes_optimize_to_loop(tmp_path: object, monkeypatch: p
     assert called_kwargs["optimize"] is True
 
 
-def test_reverse_single_respects_optimize_false(tmp_path: object, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reverse_single_respects_optimize_false(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """reverse_single should pass optimize=False when config says so."""
     from re_agent.backend.stub import StubBackend
     from re_agent.orchestrator.single import reverse_single

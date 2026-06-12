@@ -63,7 +63,7 @@ def test_strip_ghidra_noise_no_warnings_no_change() -> None:
     assert strip_ghidra_noise(raw) == raw
 
 
-def test_strip_comments_preserved() -> None:
+def test_strip_comments_removes_comments() -> None:
     """Ensure original strip_comments still works."""
     text = "int x = 1; // comment\n/* block */ int y = 2;"
     result = strip_comments(text)

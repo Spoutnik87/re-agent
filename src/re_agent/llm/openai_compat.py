@@ -75,7 +75,8 @@ class OpenAIProvider:
         for attempt in range(_RETRY_COUNT):
             try:
                 return fn(**kwargs)
-            except Exception:
+            except (openai.RateLimitError, openai.APIConnectionError,
+                    openai.InternalServerError, openai.APITimeoutError):
                 if attempt == _RETRY_COUNT - 1:
                     raise
                 _logger.warning("OpenAI API call attempt %d failed, retrying in %.1fs", attempt + 1, delay)

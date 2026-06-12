@@ -153,7 +153,7 @@ def run_fix_loop(
         if verdict.verdict == Verdict.PASS and (
             objective_verdict is None or objective_verdict.verdict != Verdict.FAIL
         ):
-            cleanup_loop(reverser, checker, checker_llm)
+            cleanup_loop(reverser, checker)
             return ReversalResult(
                 target=target,
                 code=code,
@@ -166,7 +166,7 @@ def run_fix_loop(
             )
 
     # Exhausted all rounds
-    cleanup_loop(reverser, checker, checker_llm)
+    cleanup_loop(reverser, checker)
     return ReversalResult(
         target=target,
         code=code,
@@ -179,11 +179,11 @@ def run_fix_loop(
     )
 
 
-def cleanup_loop(reverser: ReverserAgent, checker: CheckerAgent, checker_llm: LLMProvider) -> None:
+def cleanup_loop(reverser: ReverserAgent, checker: CheckerAgent) -> None:
     """Clean up conversations held by the fix loop to prevent memory leaks."""
-    if reverser._conversation_id and checker_llm.supports_conversations:
-        checker_llm.delete_conversation(reverser._conversation_id)
+    if reverser._conversation_id and reverser.llm.supports_conversations:
+        reverser.llm.delete_conversation(reverser._conversation_id)
         reverser._conversation_id = None
-    if checker._conversation_id and checker_llm.supports_conversations:
-        checker_llm.delete_conversation(checker._conversation_id)
+    if checker._conversation_id and checker.llm.supports_conversations:
+        checker.llm.delete_conversation(checker._conversation_id)
         checker._conversation_id = None

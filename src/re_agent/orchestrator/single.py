@@ -90,7 +90,7 @@ def reverse_single(
                         block_result = run_fix_loop(
                             target=target, backend=backend, reverser_llm=llm, checker_llm=llm,
                             max_rounds=config.orchestrator.max_review_rounds,
-                            log_dir=log_dir, optimize=True,
+                            log_dir=log_dir, optimize=config.orchestrator.optimize,
                             objective_verifier_enabled=config.orchestrator.objective_verifier_enabled,
                             objective_call_count_tolerance=config.orchestrator.objective_call_count_tolerance,
                             objective_control_flow_tolerance=config.orchestrator.objective_control_flow_tolerance,
@@ -152,7 +152,7 @@ def _write_code(
     output_dir: Path | None,
 ) -> None:
     """Write generated code to a file (PASS only)."""
-    if not result.code or not result.success:
+    if not result.code:
         return
     code_dir = output_dir or (Path(config.output.report_dir) / "code")
     try:

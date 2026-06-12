@@ -36,18 +36,16 @@ class CodexCLIProvider:
         model = kwargs.get("model", self._model)
 
         delay = _RETRY_BASE_DELAY
-        last_error: Exception | None = None
         for attempt in range(_RETRY_COUNT):
             try:
                 return self._run_codex(prompt, model)
-            except Exception as exc:
-                last_error = exc
+            except Exception:
                 if attempt == _RETRY_COUNT - 1:
                     raise
                 _logger.warning("Codex exec attempt %d failed, retrying in %.1fs", attempt + 1, delay)
                 time.sleep(delay)
                 delay = min(delay * 2, _RETRY_MAX_DELAY)
-        raise RuntimeError(f"Codex exec failed after {_RETRY_COUNT} attempts") from last_error
+        raise RuntimeError("unreachable")
 
     def _run_codex(self, prompt: str, model: str) -> str:
         with tempfile.NamedTemporaryFile("r+", encoding="utf-8", delete=False) as tmp:

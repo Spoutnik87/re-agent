@@ -133,7 +133,7 @@ class ReverserAgent:
 
     def fix(
         self,
-        checker_report: str,  # kept for logging, not sent to LLM
+        checker_report: str,
         issues: list[str],
         fix_instructions: list[str],
         target: FunctionTarget,
@@ -159,6 +159,7 @@ class ReverserAgent:
         self.last_prompt = fix_prompt
 
         if self.optimize:
+            # Fresh conversation each fix round: avoids compounding earlier mistakes
             messages = [
                 Message(role="system", content=self._system_prompt),
                 Message(role="user", content=fix_prompt),

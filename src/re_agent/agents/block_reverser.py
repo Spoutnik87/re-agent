@@ -110,7 +110,7 @@ class BlockReverserAgent:
         # Cache key: hash of block content + context (excludes previously reversed blocks
         # since they change between fix rounds but shouldn't affect the block output)
         cache_key = hashlib.md5(
-            f"{self._system_prompt}|{block.decompiled_text}|{full_decompiled}|{var_mapping}".encode()
+            f"{self._system_prompt}|{block.id}|{class_name}|{function_name}|{block.decompiled_text}|{full_decompiled}|{var_mapping}".encode()
         ).hexdigest()
         if cache_key in _response_cache:
             return self._extract_block_code(_response_cache[cache_key], block.id)
