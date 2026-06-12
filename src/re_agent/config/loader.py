@@ -53,6 +53,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         ("RE_AGENT_LLM_PROVIDER", ["llm", "provider"], str),
         ("RE_AGENT_LLM_API_KEY", ["llm", "api_key"], str),
         ("RE_AGENT_LLM_MODEL", ["llm", "model"], str),
+        ("RE_AGENT_LLM_BLOCK_MODEL", ["llm", "block_model"], str),
         ("RE_AGENT_LLM_BASE_URL", ["llm", "base_url"], str),
         ("RE_AGENT_BACKEND_CLI_PATH", ["backend", "cli_path"], str),
         ("RE_AGENT_BACKEND_TIMEOUT", ["backend", "timeout_s"], int),

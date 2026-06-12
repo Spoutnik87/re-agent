@@ -24,6 +24,7 @@ def reverse_class(
     llm: LLMProvider,
     session: Session | None = None,
     max_functions: int | None = None,
+    block_llm: LLMProvider | None = None,
 ) -> list[ReversalResult]:
     """Reverse functions in a class one by one until done or limit reached.
 
@@ -31,9 +32,10 @@ def reverse_class(
         class_name: Target class name
         config: Full configuration
         backend: RE backend
-        llm: LLM provider
+        llm: LLM provider (for reasoning-heavy tasks)
         session: Session for progress tracking
         max_functions: Override for max functions (defaults to config value)
+        block_llm: Optional cheaper provider for block-level reversals
 
     Returns:
         List of ReversalResult for each attempted function
@@ -65,7 +67,7 @@ def reverse_class(
             file=sys.stderr,
         )
 
-        result = reverse_single(target, config, backend, llm, session, indexer=indexer)
+        result = reverse_single(target, config, backend, llm, session, indexer=indexer, block_llm=block_llm)
         results.append(result)
 
         status = "PASS" if result.success else "FAIL"

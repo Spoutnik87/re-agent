@@ -143,10 +143,15 @@ class GhidraBridgeBackend:
         name = target
         for line in raw.splitlines():
             stripped = line.strip()
-            if stripped and not stripped.startswith("//") and not stripped.startswith("Callers"):
-                # Heuristic: take the first line that looks like a signature.
-                name = stripped.split("(")[0].split()[-1] if "(" in stripped else target
-                break
+            if not stripped:
+                continue
+            if stripped.startswith("//") or stripped.startswith("/*"):
+                continue
+            if stripped.startswith("Callers"):
+                continue
+            # Heuristic: take the first line that looks like a signature.
+            name = stripped.split("(")[0].split()[-1] if "(" in stripped else target
+            break
 
         return DecompileResult(
             address=target,

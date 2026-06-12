@@ -25,14 +25,24 @@ class ProjectProfile:
         ".cpp", ".h", ".hpp",
     ])
     hooks_csv: str | None = "docs/hooks.csv"
+    project_description: str = ""
+    project_context: str = ""
+    checker_custom_rules: str = ""
 
 
 @dataclass
 class LLMConfig:
-    """LLM provider configuration."""
+    """LLM provider configuration.
+
+    ``model`` is used for reasoning-heavy tasks (checker, skeleton, decomposition).
+    ``block_model``, when set, overrides ``model`` for block-level reversals
+    (many small calls where a cheaper/faster model suffices).
+    When ``None``, ``model`` is used for everything.
+    """
 
     provider: str = "claude"
     model: str = "claude-sonnet-4-5-20250929"
+    block_model: str | None = None
     api_key: str | None = None
     base_url: str | None = None
     max_tokens: int = 4096
@@ -65,11 +75,15 @@ class ParityConfig:
 class OrchestratorConfig:
     """Orchestrator loop settings."""
 
+    optimize: bool = True
     max_review_rounds: int = 4
     max_functions_per_class: int = 10
     objective_verifier_enabled: bool = True
     objective_call_count_tolerance: int = 3
     objective_control_flow_tolerance: int = 2
+    block_reversal_enabled: bool = True
+    block_threshold_lines: int = 100
+    block_max_lines: int = 40
 
 
 @dataclass

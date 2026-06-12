@@ -7,15 +7,20 @@ from pathlib import Path
 from re_agent.agents.source_context import SourceContextBuilder
 from re_agent.backend.protocol import REBackend
 from re_agent.config.schema import ProjectProfile
-from re_agent.core.models import FunctionTarget
+from re_agent.core.models import DecompileResult, FunctionTarget
 from re_agent.core.session import Session
 from re_agent.llm.protocol import LLMProvider, Message
 from re_agent.parity.source_indexer import SourceIndexer
 from re_agent.utils.templates import render_template
+from re_agent.utils.text import strip_ghidra_noise
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 CODE_BLOCK_RE = re.compile(r"```(?:cpp|c\+\+)?\s*\n(.*?)```", re.S)
 REVERSED_TAG_RE = re.compile(r"REVERSED_FUNCTION:\s*(.+)")
+PHASE_2_MARKER_RE = re.compile(r"##\s*Phase\s*2\s*:\s*Code", re.I)
+PHASE_1_SECTION_RE = re.compile(
+    r"##\s*Phase\s*1\s*:.*?\n(.*?)(?=##\s*Phase\s*2|\Z)", re.S | re.I
+)
 
 
 class ReverserAgent:
@@ -30,9 +35,16 @@ class ReverserAgent:
         indexer: SourceIndexer | None = None,
         session: Session | None = None,
         report_dir: Path | None = None,
+        optimize: bool = False,
     ) -> None:
         self.llm = llm
         self.backend = backend
+        self.optimize = optimize
+        project_context = project_profile.project_context if project_profile else ""
+        self._system_prompt = render_template(
+            PROMPTS_DIR / "reverser_system.md",
+            project_context=project_context,
+        )
         self._source_context_builder: SourceContextBuilder | None = None
         if source_root is not None and project_profile is not None and source_root.exists():
             self._source_context_builder = SourceContextBuilder(
@@ -45,12 +57,16 @@ class ReverserAgent:
         self._conversation_id: str | None = None
         self.last_prompt: str = ""
         self.last_response: str = ""
+        self.last_decompile_result: DecompileResult | None = None
+        self._phase1_analysis: str = ""
 
     def reverse(self, target: FunctionTarget) -> tuple[str, str]:
         """Reverse a function. Returns (code, reversed_function_tag)."""
-        # Gather context
         decompile_result = self.backend.decompile(target.address)
+        self.last_decompile_result = decompile_result
         decompiled = decompile_result.raw_output
+        if self.optimize:
+            decompiled = strip_ghidra_noise(decompiled)
 
         caps = self.backend.capabilities
 
@@ -75,10 +91,12 @@ class ReverserAgent:
             except Exception:
                 structs_text = "Unavailable"
 
-        system_prompt = render_template(PROMPTS_DIR / "reverser_system.md")
         source_context = ""
         if self._source_context_builder is not None:
             source_context = self._source_context_builder.build(target)
+            if self.optimize and source_context == "No relevant existing source context found.":
+                source_context = ""
+
         task_prompt = render_template(
             PROMPTS_DIR / "reverser_task.md",
             class_name=target.class_name,
@@ -91,7 +109,7 @@ class ReverserAgent:
         )
 
         if self._conversation_id is None and self.llm.supports_conversations:
-            self._conversation_id = self.llm.new_conversation(system_prompt)
+            self._conversation_id = self.llm.new_conversation(self._system_prompt)
 
         self.last_prompt = task_prompt
 
@@ -99,19 +117,20 @@ class ReverserAgent:
             response = self.llm.resume(self._conversation_id, task_prompt)
         else:
             messages = [
-                Message(role="system", content=system_prompt),
+                Message(role="system", content=self._system_prompt),
                 Message(role="user", content=task_prompt),
             ]
             response = self.llm.send(messages)
 
         self.last_response = response
+        self._phase1_analysis = self._extract_phase1(response)
         code = self._extract_code(response)
         tag = self._extract_tag(response)
         return code, tag
 
     def fix(
         self,
-        checker_report: str,
+        checker_report: str,  # kept for logging, not sent to LLM
         issues: list[str],
         fix_instructions: list[str],
         target: FunctionTarget,
@@ -127,7 +146,6 @@ class ReverserAgent:
             )
         fix_prompt = render_template(
             PROMPTS_DIR / "fix_instructions.md",
-            checker_report=checker_report,
             issues="\n".join(f"- {i}" for i in all_issues),
             fix_instructions="\n".join(f"- {i}" for i in all_fix_instructions),
             class_name=target.class_name,
@@ -137,21 +155,41 @@ class ReverserAgent:
 
         self.last_prompt = fix_prompt
 
-        if self._conversation_id:
+        if self.optimize:
+            messages = [
+                Message(role="system", content=self._system_prompt),
+                Message(role="user", content=fix_prompt),
+            ]
+            response = self.llm.send(messages)
+        elif self._conversation_id:
             response = self.llm.resume(self._conversation_id, fix_prompt)
         else:
             messages = [Message(role="user", content=fix_prompt)]
             response = self.llm.send(messages)
 
         self.last_response = response
+        self._phase1_analysis = self._extract_phase1(response)
         code = self._extract_code(response)
         tag = self._extract_tag(response)
         return code, tag
 
     @staticmethod
     def _extract_code(response: str) -> str:
+        # Prefer the code block AFTER the "Phase 2" marker when present
+        phase2_match = PHASE_2_MARKER_RE.search(response)
+        if phase2_match:
+            after_phase2 = response[phase2_match.end():]
+            m = CODE_BLOCK_RE.search(after_phase2)
+            if m:
+                return m.group(1).strip()
+        # Fallback: first code block in response
         m = CODE_BLOCK_RE.search(response)
         return m.group(1).strip() if m else response.strip()
+
+    @staticmethod
+    def _extract_phase1(response: str) -> str:
+        m = PHASE_1_SECTION_RE.search(response)
+        return m.group(1).strip() if m else ""
 
     @staticmethod
     def _extract_tag(response: str) -> str:

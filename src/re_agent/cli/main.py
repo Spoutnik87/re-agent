@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     rev_p.add_argument("--max-rounds", type=int, default=None, help="Max review rounds per function")
     rev_p.add_argument("--dry-run", action="store_true", help="Show plan without executing")
     rev_p.add_argument("--skip-parity", action="store_true", help="Skip parity check after PASS")
+    rev_p.add_argument("--no-optimize", action="store_true", help="Disable token optimization (use original behavior)")
 
     # parity
     par_p = sub.add_parser("parity", help="Run parity checks on hooked functions")

@@ -62,3 +62,11 @@ class LLMProvider(Protocol):
             The assistant's response text.
         """
         ...
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        """Delete a conversation, freeing its history.
+
+        Args:
+            conversation_id: ID returned by :meth:`new_conversation`.
+        """
+        ...

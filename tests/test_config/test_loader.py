@@ -16,6 +16,7 @@ def test_load_default_config() -> None:
     assert config.backend.type == "ghidra-bridge"
     assert config.orchestrator.max_review_rounds == 4
     assert config.orchestrator.objective_verifier_enabled is True
+    assert config.orchestrator.optimize is True
 
 
 def test_load_from_yaml(sample_config_path: Path) -> None:
@@ -29,6 +30,14 @@ def test_cli_overrides() -> None:
     config = load_config(None, cli_overrides={"llm.provider": "openai", "orchestrator.max_review_rounds": "6"})
     assert config.llm.provider == "openai"
     assert config.orchestrator.max_review_rounds == 6
+
+
+def test_cli_override_optimize() -> None:
+    """CLI override for optimize should toggle the flag."""
+    config = load_config(None, cli_overrides={"orchestrator.optimize": "false"})
+    assert config.orchestrator.optimize is False
+    config2 = load_config(None, cli_overrides={"orchestrator.optimize": "true"})
+    assert config2.orchestrator.optimize is True
 
 
 def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:

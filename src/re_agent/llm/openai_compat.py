@@ -1,12 +1,19 @@
 """OpenAI-compatible LLM provider implementation."""
 from __future__ import annotations
 
+import logging
+import time
 import uuid
 from typing import Any
 
 import openai
 
 from re_agent.llm.protocol import Message
+
+_logger = logging.getLogger(__name__)
+_RETRY_COUNT = 3
+_RETRY_BASE_DELAY = 1.0
+_RETRY_MAX_DELAY = 10.0
 
 
 class OpenAIProvider:
@@ -49,15 +56,32 @@ class OpenAIProvider:
             {"role": m.role, "content": m.content} for m in messages
         ]
 
-        response = self._client.chat.completions.create(
-            model=kwargs.get("model", self._model),
-            messages=api_messages,  # type: ignore[arg-type]
-            max_tokens=kwargs.get("max_tokens", self._max_tokens),
-            temperature=kwargs.get("temperature", self._temperature),
+        response = self._call_with_retry(
+            self._client.chat.completions.create,
+            dict(
+                model=kwargs.get("model", self._model),
+                messages=api_messages,
+                max_tokens=kwargs.get("max_tokens", self._max_tokens),
+                temperature=kwargs.get("temperature", self._temperature),
+            ),
         )
 
         choice = response.choices[0]
         return choice.message.content or ""
+
+    @staticmethod
+    def _call_with_retry(fn: Any, kwargs: dict[str, Any]) -> Any:
+        delay = _RETRY_BASE_DELAY
+        for attempt in range(_RETRY_COUNT):
+            try:
+                return fn(**kwargs)
+            except Exception:
+                if attempt == _RETRY_COUNT - 1:
+                    raise
+                _logger.warning("OpenAI API call attempt %d failed, retrying in %.1fs", attempt + 1, delay)
+                time.sleep(delay)
+                delay = min(delay * 2, _RETRY_MAX_DELAY)
+        raise RuntimeError("unreachable")
 
     @property
     def supports_conversations(self) -> bool:
@@ -80,3 +104,7 @@ class OpenAIProvider:
         response_text = self.send(list(history))
         history.append(Message(role="assistant", content=response_text))
         return response_text
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        """Delete a conversation, freeing its history."""
+        self._conversations.pop(conversation_id, None)

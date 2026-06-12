@@ -37,6 +37,7 @@ def run_fix_loop(
     objective_verifier_enabled: bool = True,
     objective_call_count_tolerance: int = 3,
     objective_control_flow_tolerance: int = 2,
+    optimize: bool = False,
 ) -> ReversalResult:
     """Run the reverser->checker->fix loop up to max_rounds.
 
@@ -62,8 +63,14 @@ def run_fix_loop(
         indexer=indexer,
         session=session,
         report_dir=report_dir,
+        optimize=optimize,
     )
-    checker = CheckerAgent(checker_llm, backend)
+
+    project_desc = project_profile.project_description if project_profile else ""
+    checker_rules = project_profile.checker_custom_rules if project_profile else ""
+    checker = CheckerAgent(checker_llm, backend,
+                           project_description=project_desc,
+                           checker_custom_rules=checker_rules)
 
     if log_dir:
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -71,6 +78,7 @@ def run_fix_loop(
     code = ""
     last_verdict: CheckerVerdict | None = None
     last_objective_verdict: ObjectiveVerdict | None = None
+    cached_decompile = None
 
     for round_num in range(1, max_rounds + 1):
         timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -98,12 +106,18 @@ def run_fix_loop(
                 "prompt": reverser.last_prompt,
                 "response": reverser.last_response,
                 "code_length": len(code),
+                "phase1_analysis": reverser._phase1_analysis,
             }
             log_path = log_dir / f"round{round_num}-{timestamp}-reverser.json"
             log_path.write_text(json.dumps(log_entry, indent=2), encoding="utf-8")
 
         # Check
-        verdict = checker.check(code, target)
+        if optimize and round_num == 1:
+            cached_decompile = reverser.last_decompile_result
+        verdict = checker.check(
+            code, target,
+            decompile_result=cached_decompile if optimize else None,
+        )
         last_verdict = verdict
 
         objective_verdict: ObjectiveVerdict | None = None
@@ -160,3 +174,13 @@ def run_fix_loop(
         rounds_used=max_rounds,
         success=False,
     )
+
+
+def cleanup_loop(reverser: ReverserAgent, checker: CheckerAgent, checker_llm: LLMProvider) -> None:
+    """Clean up conversations held by the fix loop to prevent memory leaks."""
+    if reverser._conversation_id and checker_llm.supports_conversations:
+        checker_llm.delete_conversation(reverser._conversation_id)
+        reverser._conversation_id = None
+    if checker._conversation_id and checker_llm.supports_conversations:
+        checker_llm.delete_conversation(checker._conversation_id)
+        checker._conversation_id = None

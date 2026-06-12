@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from re_agent.backend.protocol import REBackend
-from re_agent.core.models import CheckerVerdict, FunctionTarget, Verdict
+from re_agent.core.models import CheckerVerdict, DecompileResult, FunctionTarget, Verdict
 from re_agent.llm.protocol import LLMProvider, Message
 from re_agent.utils.templates import render_template
 
@@ -19,19 +19,42 @@ FIX_RE = re.compile(r"FIX_INSTRUCTIONS:\s*\n((?:\s*-\s*.+\n?)+)", re.I)
 class CheckerAgent:
     """Verifies reversed code against Ghidra decompilation."""
 
-    def __init__(self, llm: LLMProvider, backend: REBackend) -> None:
+    def __init__(self, llm: LLMProvider, backend: REBackend,
+                 project_description: str = "",
+                 checker_custom_rules: str = "") -> None:
         self.llm = llm
         self.backend = backend
+        self._project_description = project_description
+        self._checker_custom_rules = checker_custom_rules
         self._conversation_id: str | None = None
         self.last_prompt: str = ""
         self.last_response: str = ""
 
-    def check(self, code: str, target: FunctionTarget) -> CheckerVerdict:
-        """Check reversed code against decompilation. Returns CheckerVerdict."""
-        decompile_result = self.backend.decompile(target.address)
-        decompiled = decompile_result.raw_output
+    def check(
+        self,
+        code: str,
+        target: FunctionTarget,
+        decompile_result: DecompileResult | None = None,
+    ) -> CheckerVerdict:
+        """Check reversed code against decompilation. Returns CheckerVerdict.
 
-        system_prompt = render_template(PROMPTS_DIR / "checker_system.md")
+        Args:
+            code: The reversed C++ code to verify.
+            target: Function identification.
+            decompile_result: Pre-fetched decompile result. When provided,
+                skips the redundant backend call (optimized path).
+        """
+        if decompile_result is not None:
+            decompiled = decompile_result.raw_output
+        else:
+            decompile_result = self.backend.decompile(target.address)
+            decompiled = decompile_result.raw_output
+
+        system_prompt = render_template(
+            PROMPTS_DIR / "checker_system.md",
+            project_description=self._project_description,
+            custom_rules=self._checker_custom_rules,
+        )
         task_prompt = render_template(
             PROMPTS_DIR / "checker_task.md",
             class_name=target.class_name,

@@ -17,6 +17,8 @@ def cmd_reverse(args: argparse.Namespace) -> int:
         config.orchestrator.max_review_rounds = args.max_rounds
     if args.skip_parity:
         config.parity.enabled = False
+    if args.no_optimize:
+        config.orchestrator.optimize = False
 
     if args.dry_run:
         return _dry_run(args, config)
@@ -24,9 +26,10 @@ def cmd_reverse(args: argparse.Namespace) -> int:
     # Lazy imports to avoid loading LLM/backend unless needed
     from re_agent.backend.registry import create_backend
     from re_agent.core.session import Session
-    from re_agent.llm.registry import create_provider
+    from re_agent.llm.registry import create_block_provider, create_provider
 
     llm = create_provider(config.llm)
+    block_llm = create_block_provider(config.llm)  # None if block_model not set
     backend = create_backend(config.backend)
     session = Session(config.output.session_file)
 
@@ -52,8 +55,8 @@ def cmd_reverse(args: argparse.Namespace) -> int:
             class_name=class_name,
             function_name=function_name,
         )
-        result = reverse_single(target, config, backend, llm, session)
-        print(format_result(result))
+        result = reverse_single(target, config, backend, llm, session, block_llm=block_llm)
+        print(format_result(result).encode('ascii', errors='replace').decode())
         return 0 if result.success else 1
 
     if args.class_name:
@@ -66,6 +69,7 @@ def cmd_reverse(args: argparse.Namespace) -> int:
             llm=llm,
             session=session,
             max_functions=args.max_functions,
+            block_llm=block_llm,
         )
         for r in results:
             print(format_result(r))

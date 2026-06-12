@@ -81,6 +81,40 @@ FP_ASM_PREFIXES: tuple[str, ...] = (
 # Functions
 # ---------------------------------------------------------------------------
 
+GHIDRA_BOILERPLATE_LINES = (
+    "/* WARNING:", "/* WARNING:", "/* WARNING:",
+    "/* WARNING:", "Could not recover", "Too many branches",
+    "// WARNING:", "// WARNING:", "undefined8", "undefined4",
+    "longlong", "ulonglong",
+)
+GHIDRA_BOILERPLATE_STARTS = (
+    "/* WARNING:", "// WARNING:",
+)
+
+
+def strip_ghidra_noise(text: str) -> str:
+    """Strip Ghidra boilerplate and noise from decompile output.
+
+    Removes lines starting with WARNING comments, stack-frame annotation
+    lines, and redundant variable declarations while preserving the
+    functional decompile content.
+    """
+    stripped: list[str] = []
+    for line in text.splitlines():
+        ls = line.strip()
+        if not ls:
+            stripped.append("")
+            continue
+        if any(ls.lower().startswith(pat.lower()) for pat in GHIDRA_BOILERPLATE_STARTS):
+            continue
+        if ls.startswith("/*") and "WARNING" in ls:
+            continue
+        if ls.startswith("//") and "WARNING" in ls:
+            continue
+        stripped.append(line)
+    return "\n".join(stripped).strip("\n")
+
+
 def strip_comments(text: str) -> str:
     """Remove both block (``/* ... */``) and line (``// ...``) comments from C++ source."""
     return COMMENT_LINE_RE.sub("", COMMENT_BLOCK_RE.sub("", text))

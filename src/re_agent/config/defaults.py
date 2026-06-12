@@ -23,6 +23,9 @@ project_profile:
     - ".h"
     - ".hpp"
   hooks_csv: "docs/hooks.csv"
+  # project_description: "PROJECT: My Project (year, context) — description. Architecture details."
+  # project_context: "PROJECT CONTEXT — You are decompiling Project X..."
+  # checker_custom_rules: "Additional custom verification rules..."
 
 llm:
   provider: "claude"

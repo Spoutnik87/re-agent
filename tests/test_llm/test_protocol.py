@@ -1,9 +1,9 @@
 """Tests for LLM protocol and provider basics."""
 from __future__ import annotations
 
+from re_agent.config.schema import LLMConfig
 from re_agent.llm.protocol import LLMProvider, Message
 from re_agent.llm.registry import create_provider
-from re_agent.config.schema import LLMConfig
 
 
 def test_message_creation() -> None:
@@ -18,6 +18,7 @@ class MockProvider:
     def __init__(self, responses: list[str] | None = None) -> None:
         self._responses = responses or ["Mock response"]
         self._call_count = 0
+        self._conversations: dict[str, list[Message]] = {}
 
     def send(self, messages: list[Message], **kwargs: object) -> str:
         idx = min(self._call_count, len(self._responses) - 1)
@@ -33,6 +34,9 @@ class MockProvider:
 
     def resume(self, conversation_id: str, message: str) -> str:
         return self.send([Message(role="user", content=message)])
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        self._conversations.pop(conversation_id, None)
 
 
 def test_mock_provider_implements_protocol() -> None:
