@@ -132,6 +132,22 @@ class SourceIndexer:
                 str_quote = ch
                 i += 1
                 continue
+            # C++11 raw string literal: R"(...)" or R"delim(...)delim"
+            if ch == "R" and nxt == '"':
+                i += 2
+                delim = ""
+                while i < n and text[i] != "(":
+                    delim += text[i]
+                    i += 1
+                if i < n:
+                    i += 1  # skip (
+                closing = ")" + delim + '"'
+                while i < n:
+                    if text[i:i + len(closing)] == closing:
+                        i += len(closing)
+                        break
+                    i += 1
+                continue
             if ch == "{":
                 depth += 1
             elif ch == "}":

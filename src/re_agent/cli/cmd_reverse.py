@@ -56,7 +56,7 @@ def cmd_reverse(args: argparse.Namespace) -> int:
             function_name=function_name,
         )
         result = reverse_single(target, config, backend, llm, session, block_llm=block_llm)
-        print(format_result(result).encode('ascii', errors='replace').decode())
+        print(format_result(result))
         return 0 if result.success else 1
 
     if args.class_name:

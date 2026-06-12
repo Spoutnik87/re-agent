@@ -70,7 +70,10 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             if part not in d or not isinstance(d[part], dict):
                 d[part] = {}
             d = d[part]
-        d[key_path[-1]] = cast_type(value)
+        try:
+            d[key_path[-1]] = cast_type(value)
+        except (ValueError, TypeError) as exc:
+            _log.warning("Invalid value for %s: %r — %s, ignoring", env_var, value, exc)
 
     return raw
 

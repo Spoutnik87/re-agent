@@ -87,7 +87,8 @@ def run_fix_loop(
         if round_num == 1:
             code, tag = reverser.reverse(target)
         else:
-            assert last_verdict is not None
+            if last_verdict is None:
+                raise RuntimeError("Fix called without a prior checker verdict")
             code, tag = reverser.fix(
                 checker_report=last_verdict.summary,
                 issues=last_verdict.issues,
@@ -152,6 +153,7 @@ def run_fix_loop(
         if verdict.verdict == Verdict.PASS and (
             objective_verdict is None or objective_verdict.verdict != Verdict.FAIL
         ):
+            cleanup_loop(reverser, checker, checker_llm)
             return ReversalResult(
                 target=target,
                 code=code,
@@ -164,6 +166,7 @@ def run_fix_loop(
             )
 
     # Exhausted all rounds
+    cleanup_loop(reverser, checker, checker_llm)
     return ReversalResult(
         target=target,
         code=code,

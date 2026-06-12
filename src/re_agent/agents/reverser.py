@@ -1,6 +1,7 @@
 """Reverser agent — gathers context and asks LLM to produce reversed C++ code."""
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from re_agent.llm.protocol import LLMProvider, Message
 from re_agent.parity.source_indexer import SourceIndexer
 from re_agent.utils.templates import render_template
 from re_agent.utils.text import strip_ghidra_noise
+
+logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 CODE_BLOCK_RE = re.compile(r"```(?:cpp|c\+\+)?\s*\n(.*?)```", re.S)
@@ -184,7 +187,10 @@ class ReverserAgent:
                 return m.group(1).strip()
         # Fallback: first code block in response
         m = CODE_BLOCK_RE.search(response)
-        return m.group(1).strip() if m else response.strip()
+        if m:
+            return m.group(1).strip()
+        logger.warning("No code block found in LLM response, returning raw text")
+        return response.strip()
 
     @staticmethod
     def _extract_phase1(response: str) -> str:

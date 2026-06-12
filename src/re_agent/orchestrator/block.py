@@ -17,6 +17,7 @@ from re_agent.backend.protocol import REBackend
 from re_agent.core.models import (
     CheckerVerdict,
     FunctionTarget,
+    ObjectiveVerdict,
     ReversalResult,
     Verdict,
 )
@@ -172,18 +173,16 @@ def reverse_blocks(
 
     # Checker — skip for very large functions (>500 lines, token limit)
     if skip_checker:
-        # Trust the block-level structure. Only run objective verifier for sanity.
-        ov = None
-        if objective_verifier_enabled:
-            ov = verify_candidate(full_code, target, backend,
-                call_count_tolerance=objective_call_count_tolerance,
-                control_flow_tolerance=objective_control_flow_tolerance)
-        ok = ov is None or ov.verdict != Verdict.FAIL
+        # Objective verifier is required when checker is skipped
+        ov = verify_candidate(full_code, target, backend,
+            call_count_tolerance=objective_call_count_tolerance,
+            control_flow_tolerance=objective_control_flow_tolerance)
+        ok = ov.verdict != Verdict.FAIL
         return ReversalResult(
             target=target, code=full_code,
             checker_verdict=CheckerVerdict(verdict=Verdict.PASS if ok else Verdict.FAIL,
                 summary="Skipped LLM checker (function too large)" if ok else "Objective verifier failed",
-                issues=[] if ok else ov.findings if ov else [],
+                issues=[] if ok else ov.findings,
                 fix_instructions=[]),
             objective_verdict=ov, parity_status=None, parity_findings=[],
             rounds_used=1, success=ok,
@@ -192,7 +191,7 @@ def reverse_blocks(
     checker = CheckerAgent(_reasoning, backend, project_description=project_description)
 
     # Objective verifier first (free, no LLM tokens)
-    ov = None
+    ov: ObjectiveVerdict | None = None  # type: ignore[no-redef]
     if objective_verifier_enabled:
         ov = verify_candidate(full_code, target, backend,
             call_count_tolerance=objective_call_count_tolerance,
@@ -220,7 +219,7 @@ def reverse_blocks(
         if not full_code:
             break
         # Objective-first: only run LLM checker if objective fails
-        ov = None
+        ov = None  # type: ignore[assignment]
         if objective_verifier_enabled:
             ov = verify_candidate(full_code, target, backend,
                 call_count_tolerance=objective_call_count_tolerance,

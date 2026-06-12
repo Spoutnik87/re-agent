@@ -255,8 +255,9 @@ class GhidraBridgeBackend:
             return None
 
         lines = raw.strip().splitlines()
-        # Count CALL instructions
-        call_count = sum(1 for ln in lines if "CALL" in ln.upper())
+        # Count CALL instructions (match as x86 mnemonic, not substring)
+        _call_re = re.compile(r'(?:^|\s)CALL\s', re.I)
+        call_count = sum(1 for ln in lines if _call_re.search(ln) and not ln.lstrip().startswith(";"))
         # Check for FP-sensitive instructions
         from re_agent.utils.text import has_fp_asm
 

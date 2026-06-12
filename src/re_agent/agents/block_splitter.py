@@ -18,6 +18,75 @@ GOTO_RE = re.compile(r"^\s*goto\s+(LAB_[0-9a-fA-F]+)\s*;")
 MAX_BLOCK_LINES = 40
 
 
+def _skip_strings_and_comments(text: str) -> list[tuple[int, str]]:
+    """Return (index, char) pairs, replacing string/comment chars with spaces.
+
+    Characters inside C string literals, // comments, and /* */ comments
+    are replaced with spaces so brace counting is not thrown off.
+    """
+    result: list[tuple[int, str]] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            result.append((i, ' '))
+            i += 1
+            while i < n:
+                if text[i] == '\\':
+                    result.append((i, ' '))
+                    i += 1
+                    if i < n:
+                        result.append((i, ' '))
+                        i += 1
+                elif text[i] == '"':
+                    result.append((i, ' '))
+                    i += 1
+                    break
+                else:
+                    result.append((i, ' '))
+                    i += 1
+        elif ch == '/' and i + 1 < n and text[i + 1] == '/':
+            while i < n and text[i] != '\n':
+                result.append((i, ' '))
+                i += 1
+        elif ch == '/' and i + 1 < n and text[i + 1] == '*':
+            result.append((i, ' '))
+            i += 2
+            result.append((i - 1, ' '))
+            while i < n - 1:
+                if text[i] == '*' and text[i + 1] == '/':
+                    result.append((i, ' '))
+                    result.append((i + 1, ' '))
+                    i += 2
+                    break
+                result.append((i, ' '))
+                i += 1
+            else:
+                i = n
+        elif ch == "'":
+            result.append((i, ' '))
+            i += 1
+            while i < n:
+                if text[i] == '\\':
+                    result.append((i, ' '))
+                    i += 1
+                    if i < n:
+                        result.append((i, ' '))
+                        i += 1
+                elif text[i] == "'":
+                    result.append((i, ' '))
+                    i += 1
+                    break
+                else:
+                    result.append((i, ' '))
+                    i += 1
+        else:
+            result.append((i, ch))
+            i += 1
+    return result
+
+
 @dataclass
 class Block:
     """A self-contained block of decompiled code with balanced braces."""
@@ -54,7 +123,8 @@ def split_decompiled_function(decompiled: str, max_block_lines: int = MAX_BLOCK_
     body_start = -1
     depth = 0
     for i, line in enumerate(lines):
-        for ch in line:
+        clean = _skip_strings_and_comments(line)
+        for _idx, ch in clean:
             if ch == "{":
                 if depth == 0:
                     body_start = i
@@ -96,7 +166,8 @@ def split_decompiled_function(decompiled: str, max_block_lines: int = MAX_BLOCK_
     found_open = False
     depth = 0
     for line in lines[body_start:]:
-        for ch in line:
+        clean = _skip_strings_and_comments(line)
+        for _idx, ch in clean:
             if ch == "{":
                 depth += 1
                 found_open = True

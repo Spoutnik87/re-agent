@@ -32,7 +32,7 @@ def verify_candidate(
         decompile = backend.decompile(target.address)
     except Exception as exc:
         return ObjectiveVerdict(
-            verdict=Verdict.UNKNOWN,
+            verdict=Verdict.FAIL,
             summary="Objective verifier could not read decompile output",
             findings=[str(exc)],
         )

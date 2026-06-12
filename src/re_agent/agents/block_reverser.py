@@ -122,9 +122,19 @@ class BlockReverserAgent:
         use_conversation = True  # Always use conversations — manageable for <500 line functions
 
         if use_conversation:
-            if self._conversation_id is None and self.llm.supports_conversations:
-                self._conversation_id = self.llm.new_conversation(self._system_prompt)
-            assert self._conversation_id is not None
+            if self._conversation_id is None:
+                if self.llm.supports_conversations:
+                    self._conversation_id = self.llm.new_conversation(self._system_prompt)
+                else:
+                    # Fallback: provider does not support conversations
+                    messages = [
+                        Message(role="system", content=self._system_prompt),
+                        Message(role="user", content=task_prompt),
+                    ]
+                    response = self.llm.send(messages)
+                    self.last_response = response
+                    _response_cache[cache_key] = response
+                    return self._extract_block_code(response, block.id)
             response = self.llm.resume(self._conversation_id, task_prompt)
         else:
             messages = [

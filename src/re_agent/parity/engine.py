@@ -29,6 +29,18 @@ from re_agent.utils.text import has_fp_asm
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_bool(value: str, default: bool) -> bool:
+    """Parse a CSV field as boolean, returning default on invalid input."""
+    stripped = value.strip() if isinstance(value, str) else ""
+    if not stripped:
+        return default
+    try:
+        return bool(int(stripped))
+    except (ValueError, TypeError):
+        logger.warning("Invalid bool value in CSV: %r, using default %s", value, default)
+        return default
+
 HOOK_ADDR_RE = re.compile(r"^0x[0-9a-fA-F]+$")
 
 
@@ -48,7 +60,7 @@ def read_hooks(path: Path, include_unreversed: bool = False) -> list[HookEntry]:
             if not HOOK_ADDR_RE.match(addr):
                 continue
 
-            rev = bool(int(row["reversed"])) if "reversed" in fields else True
+            rev = _safe_bool(row.get("reversed", ""), True)
             if not include_unreversed and not rev:
                 continue
 
@@ -69,8 +81,8 @@ def read_hooks(path: Path, include_unreversed: bool = False) -> list[HookEntry]:
                 fn_name=fn_name,
                 address=addr.lower(),
                 reversed=rev,
-                locked=bool(int(row["locked"])) if "locked" in fields else False,
-                is_virtual=bool(int(row["is_virtual"])) if "is_virtual" in fields else False,
+                locked=_safe_bool(row.get("locked", ""), False),
+                is_virtual=_safe_bool(row.get("is_virtual", ""), False),
             ))
     return out
 
