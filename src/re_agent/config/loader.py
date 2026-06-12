@@ -101,7 +101,7 @@ def _coerce_field(value: Any, field_type_str: str) -> Any:
             return int(value)
         except (ValueError, TypeError):
             return value
-    if "float" in field_type_str and not isinstance(value, (int, float)):
+    if "float" in field_type_str and not isinstance(value, int | float):
         try:
             return float(value)
         except (ValueError, TypeError):

@@ -41,12 +41,12 @@ def test_init_fails_if_exists(tmp_path: Path) -> None:
 def test_status_no_session(tmp_path: Path) -> None:
     config_path = tmp_path / "re-agent.yaml"
     tp = tmp_path.as_posix()
-    config_path.write_text(f'''
+    config_path.write_text(f"""
 output:
   session_file: "{tp}/progress.json"
   report_dir: "{tp}/reports"
   log_dir: "{tp}/logs"
-''')
+""")
     result = main(["--config", str(config_path), "status"])
     assert result == 0
 
