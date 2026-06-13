@@ -40,11 +40,17 @@ class ReverserAgent:
         report_dir: Path | None = None,
         optimize: bool = False,
         enable_phase1: bool = True,
+        inject_source_context: bool = True,
+        inject_few_shot: bool = True,
+        few_shot_max_examples: int = 2,
     ) -> None:
         self.llm = llm
         self.backend = backend
         self.optimize = optimize
         self.enable_phase1 = enable_phase1
+        self._inject_source_context = inject_source_context
+        self._inject_few_shot = inject_few_shot
+        self._few_shot_max_examples = few_shot_max_examples
         project_context = project_profile.project_context if project_profile else ""
         self._system_prompt = render_template(
             PROMPTS_DIR / "reverser_system.md",
@@ -106,7 +112,7 @@ class ReverserAgent:
                 structs_text = "Unavailable"
 
         source_context = ""
-        if self._source_context_builder is not None:
+        if self._inject_source_context and self._source_context_builder is not None:
             source_context = self._source_context_builder.build(target)
             if self.optimize and source_context == "No relevant existing source context found.":
                 source_context = ""
@@ -129,8 +135,8 @@ class ReverserAgent:
         if source_context and source_context not in ("None", "No relevant existing source context found."):
             task_prompt += f"\n\n**Existing source context:**\n{source_context}"
 
-        if self._few_shot_builder is not None:
-            examples = self._few_shot_builder.find_similar(decompiled)
+        if self._inject_few_shot and self._few_shot_builder is not None:
+            examples = self._few_shot_builder.find_similar(decompiled, max_examples=self._few_shot_max_examples)
             if examples:
                 task_prompt += "\n\n**Reference examples (similar functions successfully decompiled):**\n"
                 task_prompt += "\n".join(examples)

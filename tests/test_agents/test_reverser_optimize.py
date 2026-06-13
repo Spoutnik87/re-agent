@@ -196,3 +196,107 @@ def test_optimize_source_context_with_real_source(tmp_path: Path) -> None:
     prompt = reverser.last_prompt
     assert "Class header:" in prompt
     assert "class CTest" in prompt
+
+
+def test_inject_source_context_false_skips_source_context_build(tmp_path: Path) -> None:
+    """When inject_source_context=False, build() is never called even if source_root exists."""
+    (tmp_path / "CTest.h").write_text("class CTest { void foo(); };\n", encoding="utf-8")
+
+    llm = RecordingLLM()
+    target = FunctionTarget(address="0x123456", class_name="CTest", function_name="foo")
+    profile = ProjectProfile(
+        source_root=str(tmp_path),
+        source_extensions=[".cpp", ".h", ".hpp"],
+        hooks_csv=None,
+    )
+
+    reverser = ReverserAgent(
+        llm,
+        EmptySourceBackend(),
+        source_root=tmp_path,
+        project_profile=profile,
+        inject_source_context=False,
+    )
+    reverser.reverse(target)
+
+    prompt = reverser.last_prompt
+    assert "Class header:" not in prompt
+    assert "class CTest" not in prompt
+
+
+def test_inject_few_shot_false_skips_few_shot_injection(tmp_path: Path) -> None:
+    """When inject_few_shot=False, few-shot examples are not injected even if index has matches."""
+    from re_agent.agents.few_shot_builder import FewShotBuilder
+
+    FewShotBuilder.clear_cache()
+    (tmp_path / "0x111_CFoo_bar.cpp").write_text(
+        "void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8"
+    )
+
+    llm = RecordingLLM()
+    target = FunctionTarget(address="0x123456", class_name="CTest", function_name="foo")
+
+    reverser = ReverserAgent(
+        llm,
+        EmptySourceBackend(),
+        source_root=tmp_path,
+        inject_few_shot=False,
+    )
+    reverser.reverse(target)
+
+    prompt = reverser.last_prompt
+    assert "Reference examples" not in prompt
+    FewShotBuilder.clear_cache()
+
+
+def test_inject_few_shot_true_with_examples_injects_them(tmp_path: Path) -> None:
+    """When inject_few_shot=True (default), found examples are injected."""
+    from re_agent.agents.few_shot_builder import FewShotBuilder
+
+    FewShotBuilder.clear_cache()
+    (tmp_path / "0x111_CFoo_bar.cpp").write_text(
+        "void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8"
+    )
+
+    llm = RecordingLLM()
+    target = FunctionTarget(address="0x123456", class_name="CTest", function_name="foo")
+
+    reverser = ReverserAgent(
+        llm,
+        EmptySourceBackend(),
+        source_root=tmp_path,
+        inject_few_shot=True,
+    )
+    reverser.reverse(target)
+
+    prompt = reverser.last_prompt
+    assert "Reference examples" in prompt
+    FewShotBuilder.clear_cache()
+
+
+def test_few_shot_max_examples_limits_injected_count(tmp_path: Path) -> None:
+    """few_shot_max_examples=1 injects at most one example."""
+    from re_agent.agents.few_shot_builder import FewShotBuilder
+
+    FewShotBuilder.clear_cache()
+    for i in range(5):
+        (tmp_path / f"0x{i:03x}_CFoo_fn{i}.cpp").write_text(
+            f"void CFoo::fn{i}() {{ call{i}(); }}\n", encoding="utf-8"
+        )
+
+    llm = RecordingLLM()
+    target = FunctionTarget(address="0x123456", class_name="CTest", function_name="foo")
+
+    reverser = ReverserAgent(
+        llm,
+        EmptySourceBackend(),
+        source_root=tmp_path,
+        inject_few_shot=True,
+        few_shot_max_examples=1,
+    )
+    reverser.reverse(target)
+
+    prompt = reverser.last_prompt
+    # With max_examples=1, only one "// Example from" header should appear
+    assert prompt.count("// Example from") <= 1
+    FewShotBuilder.clear_cache()
