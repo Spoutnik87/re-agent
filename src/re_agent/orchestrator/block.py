@@ -209,6 +209,7 @@ def reverse_blocks(
         reset_conv: bool = False,
         only_block_ids: set[str] | None = None,
         previous_code: dict[str, str] | None = None,
+        targeted_issues: dict[str, str] | None = None,
     ) -> tuple[list[str], dict[str, str]]:
         reversed_blocks: dict[str, str] = {}
         all_code: list[str] = []
@@ -232,6 +233,10 @@ def reverse_blocks(
                 ctx = var_context
             if reset_conv:
                 agent.reset_conversation()
+            # Inject targeted checker issues into variable mapping context
+            issue_hint = ""
+            if targeted_issues and block.id in targeted_issues:
+                issue_hint = "\n\nChecker issues for THIS block:\n" + targeted_issues[block.id]
             bid, bc = (
                 block.id,
                 agent.reverse_block(
@@ -240,7 +245,7 @@ def reverse_blocks(
                     function_name=target.function_name,
                     address=target.address,
                     full_decompiled=ctx,
-                    var_mapping=var_mapping,
+                    var_mapping=var_mapping + issue_hint,
                     reversed_blocks=reversed_blocks,
                 ),
             )
@@ -329,10 +334,18 @@ def reverse_blocks(
                 class_name=target.class_name,
                 function_name=target.function_name,
                 address=target.address,
-                llm=_reasoning,
+                llm=llm,
                 project_description=project_description,
             )
         affected = _find_affected_blocks(cv.issues, split) if cv else None
+        # Build per-block targeted issue context for surgical fixes
+        targeted_issues: dict[str, str] = {}
+        if cv and affected:
+            for blk in split.blocks:
+                if blk.id in affected:
+                    relevant = [i for i in cv.issues if blk.id.lower() in i.lower() or blk.label.lower() in i.lower()]
+                    if relevant:
+                        targeted_issues[blk.id] = "\n".join(f"- {r}" for r in relevant)
         all_code, reversed_blocks = _reverse_all_blocks(
             split,
             block_agent_fast,
@@ -344,6 +357,7 @@ def reverse_blocks(
             reset_conv=True,
             only_block_ids=affected,
             previous_code=reversed_blocks,
+            targeted_issues=targeted_issues or None,
         )
         full_code = _stitch(split, all_code)
         if not full_code:

@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 from re_agent.agents.block_splitter import decompiled_line_count
+from re_agent.agents.few_shot_builder import pre_classify
 from re_agent.agents.loop import run_fix_loop
 from re_agent.backend.protocol import REBackend
 from re_agent.config.schema import ReAgentConfig
@@ -66,7 +67,18 @@ def reverse_single(
         try:
             decompile = backend.decompile(target.address)
             line_count = decompiled_line_count(decompile.raw_output)
-            if line_count >= config.orchestrator.block_threshold_lines:
+            classification = pre_classify(decompile.raw_output)
+            logger.info(
+                "%s: %d lines, classified as %s",
+                target.address,
+                line_count,
+                classification,
+            )
+            # Skip expensive block decomposition for trivial functions
+            if classification in ("leaf", "getter-setter") and line_count < 100:
+                logger.info("%s: trivial %s — skipping block reversal", target.address, classification)
+                block_result = None
+            elif line_count >= config.orchestrator.block_threshold_lines:
                 effective_max_rounds = _compute_max_fix_rounds(line_count, config.orchestrator.max_review_rounds)
                 logger.info(
                     "%s: %d lines — effective max fix rounds: %d (from %d)",

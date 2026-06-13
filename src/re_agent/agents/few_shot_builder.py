@@ -9,8 +9,27 @@ Lazy-loading: the index is built on first access and cached in memory.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
+from typing import Any, TypedDict
+
+# ---------------------------------------------------------------------------
+# Typed feature dict
+# ---------------------------------------------------------------------------
+
+
+class FeatureDict(TypedDict, total=False):
+    lines: int
+    vtable: int
+    globals: int
+    calls: int
+    line_bucket: str
+    vtable_bucket: str
+    path: str
+    text: str
+    content_hash: str
+
 
 # ---------------------------------------------------------------------------
 # Regex for feature extraction
@@ -25,6 +44,25 @@ GLOBAL_RE = re.compile(
 )
 CALL_RE = re.compile(
     r"\b([A-Za-z_][A-Za-z0-9_:]*)\s*\(",
+)
+
+CPP_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "if",
+        "for",
+        "while",
+        "switch",
+        "return",
+        "sizeof",
+        "decltype",
+        "static_cast",
+        "reinterpret_cast",
+        "const_cast",
+        "dynamic_cast",
+        "catch",
+        "new",
+        "delete",
+    }
 )
 
 
@@ -43,40 +81,47 @@ def _vtable_bucket(n: int) -> str:
     return "heavy-vtable"
 
 
-def _extract_features(code_text: str) -> dict:
+def extract_features(code_text: str) -> FeatureDict:
+    """Extract structural features from C++ source or Ghidra decompile text."""
     vtable = len(VTABLE_RE.findall(code_text))
     globals_count = len(GLOBAL_RE.findall(code_text))
 
     call_count = 0
     for m in CALL_RE.finditer(code_text):
-        tok = m.group(1)
-        if tok in {
-            "if",
-            "for",
-            "while",
-            "switch",
-            "return",
-            "sizeof",
-            "decltype",
-            "static_cast",
-            "reinterpret_cast",
-            "const_cast",
-            "dynamic_cast",
-            "catch",
-            "new",
-            "delete",
-        }:
-            continue
-        call_count += 1
+        if m.group(1) not in CPP_KEYWORDS:
+            call_count += 1
 
-    return {
-        "lines": code_text.count("\n") + 1,
-        "vtable": vtable,
-        "globals": globals_count,
-        "calls": call_count,
-        "line_bucket": _bucket(code_text.count("\n") + 1),
-        "vtable_bucket": _vtable_bucket(vtable),
-    }
+    lines = code_text.count("\n") + 1
+    return FeatureDict(
+        lines=lines,
+        vtable=vtable,
+        globals=globals_count,
+        calls=call_count,
+        line_bucket=_bucket(lines),
+        vtable_bucket=_vtable_bucket(vtable),
+    )
+
+
+def pre_classify(decompiled_text: str) -> str:
+    """Classify a function by its decompile characteristics.
+
+    Returns one of: "leaf", "getter-setter", "vtable-heavy",
+    "win32-api", "complex-state-machine", "general".
+    """
+    features = extract_features(decompiled_text)
+    lower = decompiled_text.lower()
+
+    if features["calls"] == 0 and features["vtable"] == 0:
+        return "leaf"
+    if features["calls"] <= 2 and features["vtable"] == 0 and features["lines"] < 20:
+        return "getter-setter"
+    if "getprocaddress" in lower or "loadlibrary" in lower or "registerclass" in lower:
+        return "win32-api"
+    if features["vtable"] >= 5:
+        return "vtable-heavy"
+    if features["lines"] >= 200 and features["calls"] >= 10:
+        return "complex-state-machine"
+    return "general"
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +133,7 @@ class FewShotBuilder:
     """Builds and queries an index of successfully decompiled functions."""
 
     _instance: FewShotBuilder | None = None
-    _index: list[dict] | None = None
+    _index: list[FeatureDict] | None = None
 
     def __init__(self, code_dir: Path, max_examples: int = 2, max_lines: int = 30):
         self._code_dir = code_dir
@@ -120,7 +165,7 @@ class FewShotBuilder:
             FewShotBuilder._index = []
             return
 
-        entries: list[dict] = []
+        entries: list[dict[str, Any]] = []
         for path in self._code_dir.iterdir():
             if path.suffix != ".cpp":
                 continue
@@ -134,13 +179,16 @@ class FewShotBuilder:
                 continue
             entries.append({"path": path, "text": text})
 
-        # Extract features and index
-        indexed: list[dict] = []
+        indexed: list[FeatureDict] = []
         for e in entries:
-            features = _extract_features(e["text"])
-            features["path"] = e["path"]
-            features["text"] = e["text"]
-            indexed.append(features)
+            features = extract_features(e["text"])
+            fdict: FeatureDict = {
+                "path": str(e["path"]),
+                "text": e["text"],
+                "content_hash": hashlib.md5(str(e["path"]).encode()).hexdigest()[:8],
+                **features,
+            }
+            indexed.append(fdict)
 
         FewShotBuilder._index = indexed
 
@@ -165,10 +213,9 @@ class FewShotBuilder:
 
         max_ex = max_examples if max_examples else self._max_examples
 
-        target = _extract_features(decompiled)
+        target = extract_features(decompiled)
 
-        # Score each candidate against the target
-        scored: list[tuple[int, dict]] = []
+        scored: list[tuple[int, FeatureDict]] = []
         for entry in index:
             score = 0
             if entry["line_bucket"] == target["line_bucket"]:
@@ -184,7 +231,7 @@ class FewShotBuilder:
         scored.sort(key=lambda x: -x[0])
 
         examples: list[str] = []
-        seen_paths: set[Path] = set()
+        seen_paths: set[str] = set()
         for _score, entry in scored:
             if len(examples) >= max_ex:
                 break
@@ -192,7 +239,7 @@ class FewShotBuilder:
                 continue
             seen_paths.add(entry["path"])
             trimmed = self._trim(entry["text"])
-            name = entry["path"].stem.replace("0x", "")
+            name = Path(entry["path"]).stem.replace("0x", "")
             examples.append(f"// Example from {name}:\n```cpp\n{trimmed}\n```")
 
         return examples
@@ -205,7 +252,6 @@ class FewShotBuilder:
         lines = text.strip().splitlines()
         if len(lines) <= self._max_lines:
             return "\n".join(lines)
-        # Keep first 5 lines (includes + declarations) and last lines
         head = lines[:5]
         tail = lines[-(self._max_lines - 6) :]
         return "\n".join(head) + "\n// ... (truncated)\n" + "\n".join(tail)

@@ -46,8 +46,8 @@ def compute_structural_summary(decompiled_text: str, reversed_code: str) -> str:
     Returns a concise text suitable for injection into the checker prompt
     to help the LLM focus on semantic issues rather than recounting calls.
     """
-    decomp_body = strip_comments(_extract_body(reversed_code))
-    rev_body = strip_comments(_extract_body(decompiled_text))
+    decomp_body = strip_comments(_extract_body(decompiled_text))
+    rev_body = strip_comments(_extract_body(reversed_code))
 
     decomp_calls = _extract_call_order(decomp_body)
     rev_calls = _extract_call_order(rev_body)
@@ -55,23 +55,24 @@ def compute_structural_summary(decompiled_text: str, reversed_code: str) -> str:
     decomp_cf = count_control_flow(decomp_body)
     rev_cf = count_control_flow(rev_body)
 
-    lines = []
-    lines.append(f"Calls: decompile={len(decomp_calls)} reversed={len(rev_calls)}")
+    parts: list[str] = [
+        f"call_count: decompile={len(decomp_calls)} reversed={len(rev_calls)}",
+    ]
     if decomp_calls != rev_calls:
-        lines.append(f"  Decompile call order: {' → '.join(decomp_calls[:12])}")
-        lines.append(f"  Reversed call order:  {' → '.join(rev_calls[:12])}")
         missing = [c for c in decomp_calls if c not in rev_calls]
         extra = [c for c in rev_calls if c not in decomp_calls]
         if missing:
-            lines.append(f"  Missing calls: {', '.join(missing[:8])}")
+            parts.append(f"missing_calls: {', '.join(missing[:8])}")
         if extra:
-            lines.append(f"  Extra calls: {', '.join(extra[:8])}")
+            parts.append(f"extra_calls: {', '.join(extra[:8])}")
+        if not missing and not extra:
+            call_match = sum(1 for a, b in zip(decomp_calls, rev_calls, strict=False) if a == b)
+            parts.append(f"call_order_match: {call_match}/{len(decomp_calls)}")
     else:
-        lines.append("  Call order: IDENTICAL")
+        parts.append("call_order: IDENTICAL")
+    parts.append(f"control_flow: decompile={decomp_cf} reversed={rev_cf}")
 
-    lines.append(f"Control flow: decompile={decomp_cf} reversed={rev_cf}")
-
-    return "\n".join(lines)
+    return " | ".join(parts)
 
 
 def verify_candidate(
