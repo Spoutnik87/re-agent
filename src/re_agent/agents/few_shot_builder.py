@@ -204,7 +204,8 @@ class FewShotBuilder:
             max_examples: Override the instance default (0 = use default).
             min_score: Minimum similarity score to include an example (0 = include all).
                 Scoring: +3 line bucket match, +3 vtable bucket match, +1 globals within 2,
-                +1 calls within 3. Total possible: 8.
+                +1 calls within 3. Total possible: 8. Useful for filtering irrelevant examples
+                before prompt injection — wire through PipelineProfile when needed.
 
         Returns:
             List of trimmed example snippets ready for prompt injection.

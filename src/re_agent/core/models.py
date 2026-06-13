@@ -279,6 +279,8 @@ class PipelineProfile:
 
     Controls which pipeline steps run for a given function type,
     allowing trivial functions to skip expensive steps.
+
+    few_shot_max_examples: Max examples to inject from FewShotBuilder (0 = disable few-shot).
     """
 
     max_rounds: int
@@ -286,7 +288,7 @@ class PipelineProfile:
     inject_source_context: bool
     inject_few_shot: bool
     use_objective_verifier: bool
-    few_shot_max_examples: int = 0
+    few_shot_max_examples: int = 0  # 0 = disable; non-zero = pass to find_similar()
 
 
 _PROFILES: dict[str, PipelineProfile] = {
@@ -322,6 +324,8 @@ _PROFILES: dict[str, PipelineProfile] = {
         use_objective_verifier=True,
         few_shot_max_examples=3,
     ),
+    # max_rounds=2: complex functions need a fix cycle, but fewer rounds than "general"
+    # to cap token cost on deeply nested logic that often stagnates after 2 rounds anyway.
     "complex-state-machine": PipelineProfile(
         max_rounds=2,
         enable_phase1=True,

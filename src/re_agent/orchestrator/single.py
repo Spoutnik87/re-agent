@@ -126,6 +126,7 @@ def reverse_single(
                     )
                     if not block_result.success:
                         logger.info("%s: flash block FAIL — falling back to standard", target.address)
+                        # Note: profile.max_rounds takes precedence over size-based scaling here.
                         block_result = run_fix_loop(
                             target=target,
                             backend=backend,
