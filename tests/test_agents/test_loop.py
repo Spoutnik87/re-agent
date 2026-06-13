@@ -424,9 +424,9 @@ def test_loop_breaks_when_code_unchanged_between_rounds() -> None:
     # Round 1: reverse + check. Round 2: reverse produces same code → break.
     # Checker should NOT be called in round 2.
     assert not result.success
-    assert result.rounds_used <= 2
-    # checker called at most once (round 1 only)
-    assert len(chk_llm.send_calls) <= 1
+    assert result.rounds_used == 2
+    # checker called exactly once (round 1 only)
+    assert len(chk_llm.send_calls) == 1
 
 
 def test_loop_profile_disables_objective_verifier() -> None:

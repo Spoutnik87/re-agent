@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import time
@@ -93,7 +92,7 @@ def run_fix_loop(
         log_dir.mkdir(parents=True, exist_ok=True)
 
     code = ""
-    last_code_hash = ""
+    last_code = ""
     last_verdict: CheckerVerdict | None = None
     last_objective_verdict: ObjectiveVerdict | None = None
     cached_decompile = None
@@ -120,8 +119,7 @@ def run_fix_loop(
             )
 
         # Short-circuit: identical code means no progress; skip checker and stop
-        code_hash = hashlib.md5(code.encode()).hexdigest()
-        if round_num > 1 and code_hash == last_code_hash:
+        if round_num > 1 and code == last_code:
             logger.info(
                 "%s: code unchanged in round %d, stopping fix loop early",
                 target.address,
@@ -138,7 +136,7 @@ def run_fix_loop(
                 rounds_used=round_num,
                 success=False,
             )
-        last_code_hash = code_hash
+        last_code = code
 
         if log_dir:
             log_entry = {
