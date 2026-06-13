@@ -135,7 +135,7 @@ class ReverserAgent:
         if source_context and source_context not in ("None", "No relevant existing source context found."):
             task_prompt += f"\n\n**Existing source context:**\n{source_context}"
 
-        if self._inject_few_shot and self._few_shot_builder is not None:
+        if self._inject_few_shot and self._few_shot_builder is not None and self._few_shot_max_examples != 0:
             examples = self._few_shot_builder.find_similar(decompiled, max_examples=self._few_shot_max_examples)
             if examples:
                 task_prompt += "\n\n**Reference examples (similar functions successfully decompiled):**\n"

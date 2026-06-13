@@ -298,5 +298,6 @@ def test_few_shot_max_examples_limits_injected_count(tmp_path: Path) -> None:
 
     prompt = reverser.last_prompt
     # With max_examples=1, only one "// Example from" header should appear
-    assert prompt.count("// Example from") <= 1
+    assert prompt.count("// Example from") >= 1  # at least one injected
+    assert prompt.count("// Example from") <= 1  # at most one (max_examples=1)
     FewShotBuilder.clear_cache()
