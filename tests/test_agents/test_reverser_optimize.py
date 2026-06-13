@@ -301,3 +301,40 @@ def test_few_shot_max_examples_limits_injected_count(tmp_path: Path) -> None:
     assert prompt.count("// Example from") >= 1  # at least one injected
     assert prompt.count("// Example from") <= 1  # at most one (max_examples=1)
     FewShotBuilder.clear_cache()
+
+
+def test_few_shot_skipped_when_similarity_below_threshold(tmp_path: Path) -> None:
+    """Few-shot examples are skipped when the best match score is below min_score."""
+    from re_agent.agents.few_shot_builder import FewShotBuilder
+    FewShotBuilder.clear_cache()
+
+    # Create a cpp file that will have low similarity to the query
+    (tmp_path / "0x111_CFoo_bar.cpp").write_text(
+        "void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8"
+    )
+
+    builder = FewShotBuilder(tmp_path, max_examples=2)
+    # Query for a very different function; line count >= 200 → bucket "200+l"
+    # but the example has ~1 line → bucket "<25l" → no line_bucket match (0 points)
+    # vtable match (+3), globals within 2 (+1), calls within 3 (+1) = score 5
+    long_decompile = "void Fn() {\n" + "  int x = 0;\n" * 200 + "}\n"
+    results = builder.find_similar(long_decompile, min_score=6)
+
+    assert results == []
+
+
+def test_few_shot_returned_when_above_threshold(tmp_path: Path) -> None:
+    """Few-shot examples are returned when score meets min_score."""
+    from re_agent.agents.few_shot_builder import FewShotBuilder
+    FewShotBuilder.clear_cache()
+
+    # Create a cpp file with matching characteristics (same small size)
+    content = "void CFoo::bar() {\n" + "  call_something();\n" * 3 + "}\n"
+    (tmp_path / "0x111_CFoo_bar.cpp").write_text(content, encoding="utf-8")
+
+    builder = FewShotBuilder(tmp_path, max_examples=2)
+    # Same small function → line_bucket match (+3), vtable match (+3) = score 6
+    results = builder.find_similar(content, min_score=3)
+
+    assert len(results) == 1
+    assert "CFoo" in results[0] or "bar" in results[0]
