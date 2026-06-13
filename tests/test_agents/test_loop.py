@@ -373,3 +373,68 @@ def test_optimize_loop_with_objective_verifier() -> None:
     assert result.rounds_used == 2
     assert result.objective_verdict is not None
     assert result.objective_verdict.verdict == Verdict.PASS
+
+
+def test_loop_respects_profile_max_rounds() -> None:
+    """run_fix_loop with a leaf profile should stop after 1 round even if checker fails."""
+    from re_agent.core.models import PipelineProfile
+
+    target = FunctionTarget(address="0x100", class_name="C", function_name="f")
+    backend = StubBackend()
+
+    reverser_resp = "```cpp\nvoid C::f() {}\n```\nREVERSED_FUNCTION: C::f (0x100)"
+    # Checker always fails
+    fail_resp = "VERDICT: FAIL\nSUMMARY: Issues found\nISSUES:\n- missing logic\nFIX_INSTRUCTIONS:\n- add logic"
+
+    rev_llm = NonConvMockLLM([reverser_resp] * 5)
+    chk_llm = NonConvMockLLM([fail_resp] * 5)
+
+    leaf_profile = PipelineProfile(
+        max_rounds=1,
+        enable_phase1=False,
+        inject_source_context=False,
+        inject_few_shot=False,
+        use_objective_verifier=False,
+        few_shot_max_examples=0,
+    )
+
+    result = run_fix_loop(target, backend, rev_llm, chk_llm, max_rounds=4, profile=leaf_profile)
+
+    assert result.rounds_used == 1
+    assert not result.success
+    # Only 1 reverser call + 1 checker call
+    assert len(rev_llm.send_calls) == 1
+    assert len(chk_llm.send_calls) == 1
+
+
+def test_loop_profile_disables_objective_verifier() -> None:
+    """run_fix_loop with use_objective_verifier=False should not run structural checks."""
+    from re_agent.core.models import PipelineProfile
+
+    target = FunctionTarget(address="0x100", class_name="C", function_name="f")
+    backend = StubBackend()
+
+    reverser_resp = "```cpp\nvoid C::f() {}\n```\nREVERSED_FUNCTION: C::f (0x100)"
+    checker_resp = "VERDICT: PASS\nSUMMARY: OK\nISSUES:\n- none\nFIX_INSTRUCTIONS:\n- none"
+
+    rev_llm = NonConvMockLLM([reverser_resp])
+    chk_llm = NonConvMockLLM([checker_resp])
+
+    no_verify_profile = PipelineProfile(
+        max_rounds=1,
+        enable_phase1=False,
+        inject_source_context=False,
+        inject_few_shot=False,
+        use_objective_verifier=False,
+        few_shot_max_examples=0,
+    )
+
+    result = run_fix_loop(
+        target, backend, rev_llm, chk_llm,
+        max_rounds=4,
+        objective_verifier_enabled=True,  # Would normally run, profile overrides
+        profile=no_verify_profile,
+    )
+
+    assert result.success
+    assert result.objective_verdict is None
