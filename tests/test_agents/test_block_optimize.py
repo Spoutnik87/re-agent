@@ -49,10 +49,14 @@ def _make_block(block_id: str, label: str, text: str) -> Block:
 
 
 def _get_last_user_msg(provider: CapturingProvider) -> str:
+    # Return the last user message in the most recently sent batch.
+    # When using conversation mode, the full history is passed to send(), so we
+    # want the last user message (the one just added), not the first.
+    result = ""
     for msg in provider.sent_messages[-1]:
         if msg.role == "user":
-            return msg.content
-    return ""
+            result = msg.content
+    return result
 
 
 def test_reversed_blocks_capped_to_3() -> None:
@@ -148,3 +152,55 @@ def test_reset_conversation_between_blocks_uses_new_conversation() -> None:
     # Verify the second conversation is fresh — no context from first block
     second_user_msg = _get_last_user_msg(provider)
     assert "int x = 1;" not in second_user_msg
+
+
+def test_full_decompiled_absent_in_subsequent_blocks() -> None:
+    """full_decompiled should not appear in task prompt for blocks after the first."""
+    provider = CapturingProvider()
+    agent = BlockReverserAgent(provider)
+
+    full_ctx = "void Foo::bar() {\n  int UNIQUE_SENTINEL_VALUE = 42;\n  call1();\n}"
+
+    # First block — full_decompiled must appear
+    b0 = _make_block("b0", "first", "int x = call1();")
+    agent.reverse_block(
+        block=b0,
+        class_name="Foo",
+        function_name="bar",
+        address="0x1000",
+        full_decompiled=full_ctx,
+    )
+    first_user_msg = _get_last_user_msg(provider)
+    assert "UNIQUE_SENTINEL_VALUE" in first_user_msg
+
+    # Second block — full_decompiled must NOT appear in the new user message
+    b1 = _make_block("b1", "second", "int y = call2();")
+    agent.reverse_block(
+        block=b1,
+        class_name="Foo",
+        function_name="bar",
+        address="0x1000",
+        full_decompiled=full_ctx,
+        reversed_blocks={"b0": "int x = call1();"},
+    )
+    second_user_msg = _get_last_user_msg(provider)
+    assert "UNIQUE_SENTINEL_VALUE" not in second_user_msg
+
+
+def test_full_decompiled_present_in_first_block() -> None:
+    """full_decompiled must be in the task prompt for the first block."""
+    provider = CapturingProvider()
+    agent = BlockReverserAgent(provider)
+
+    full_ctx = "void Foo::bar() {\n  int UNIQUE_MARKER = 99;\n  call1();\n}"
+
+    b0 = _make_block("b0", "first", "int x = call1();")
+    agent.reverse_block(
+        block=b0,
+        class_name="Foo",
+        function_name="bar",
+        address="0x1000",
+        full_decompiled=full_ctx,
+    )
+    user_msg = _get_last_user_msg(provider)
+    assert "UNIQUE_MARKER" in user_msg
