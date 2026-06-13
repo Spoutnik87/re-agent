@@ -1,8 +1,8 @@
 # re-agent (fork)
 
-Autonomous reverse-engineering agent — source-aware reverser/checker loop, block-level decomposition, configurable prompts, objective verifier, parity engine, and Ghidra backend.
+Autonomous reverse-engineering agent — source-aware reverser/checker loop, block-level decomposition, configurable prompts, few-shot learning, objective verifier, and Ghidra backend.
 
-This is a fork with significant enhancements over the original: block-level decompilation for large functions, configurable prompt templates, token-optimized LLM interactions, retry logic, and an extended test suite.
+This is a fork with significant enhancements: block-level decompilation for large functions, few-shot example retrieval (5700+ indexed successes), pre-classification for strategy selection, configurable prompt templates, token-optimized LLM interactions (+ retry logic), and an extended test suite.
 
 ## Overview
 
@@ -16,22 +16,24 @@ re-agent reverse --class CTrain
     │   └── project_description / project_context / checker_custom_rules
     │
     ├── Orchestrator (single / class runner / block)
-    │   ├── Function Picker (ranks by caller count, filters completed)
-    │   ├── Context Gatherer (decompile + xrefs + structs + source retrieval)
+    │   ├── Pre-classification (leaf / getter-setter / vtable-heavy / Win32 / complex)
+    │   │   └── Skips expensive block reversal for trivial functions
     │   │
-    │   ├── Block-Level Pipeline (>100 lines)
-    │   │   ├── Block Splitter (syntactic decomposition at depth-0 boundaries)
-    │   │   ├── Variable Mapping (one pro LLM call → shared across all blocks)
-    │   │   ├── Block Reverser (per-block reversal with 3-block context window)
-    │   │   ├── Skeleton Generator (signature + locals + block placeholders)
-    │   │   └── Recursive Decomposer (LLM-driven for >200-line functions)
+    │   ├── Block-Level Pipeline (>100 lines, 2-tier escalation)
+    │   │   ├── Block Splitter (if/else chains grouped into single blocks)
+    │   │   ├── Variable Mapping (always pro model — flash=translation only)
+    │   │   ├── Block Reverser (per-block + targeted issue injection)
+    │   │   └── Stitch Validation (brace balance + block count checks)
     │   │
-    │   ├── Agent Loop (reverser → checker → fix, max N rounds)
+    │   ├── Agent Loop (reverser → checker → fix, stagnation detection)
+    │   │   ├── Few-Shot Builder (5700+ indexed successes → 2 similar examples)
+    │   │   ├── Structural Diff (non-LLM call-order comparison for checker)
     │   │   ├── LLM Providers: Claude | OpenAI-compatible APIs | Codex CLI
-    │   │   ├── Prompt Templates (customizable .md files with $variables)
+    │   │   ├── Prompt Templates (customizable, Phase 1/2 optional)
+    │   │   ├── Token Tracking (total_prompt_tokens + completion_tokens)
     │   │   └── Retry with exponential backoff (3 attempts, 1s→10s)
     │   │
-    │   ├── Objective Verifier (call-count + control-flow sanity checks)
+    │   ├── Objective Verifier (cached Ghidra decompile, call/CF counts)
     │   │
     │   ├── Parity Engine (GREEN/YELLOW/RED verification gate)
     │   │   ├── Source Indexer (C++ body parser)
@@ -46,42 +48,89 @@ re-agent reverse --class CTrain
 
 ## Key Enhancements (this fork)
 
-### Block-Level Decompilation
-Large functions (>100 lines) are automatically split into independent blocks, reversed in parallel with shared variable naming, then stitched back together. This reduces token usage by ~80% compared to reversing the full function in one LLM call.
+### Phase 1/Phase 2 Toggle (`enable_phase1`)
 
-- **Syntactic splitter**: Splits at `if`/`else`/`for`/`while`/`switch` boundaries at brace-depth 0
-- **LLM recursive decomposer**: For functions >200 lines, asks the LLM to identify logical sub-sections
-- **Variable mapping**: One pro-model call generates a naming map shared across all blocks
-- **3-block context window**: Each block only sees the last 3 reversed blocks, preventing O(n²) token bloat
+By default the reverser uses a two-phase prompt: Phase 1 (control flow tree + variable map + call inventory) followed by Phase 2 (code generation). This costs ~40% output tokens. Setting `enable_phase1: false` in `re-agent.yaml` switches to a direct code-generation prompt — the LLM produces clean C++20 without the explicit analysis preamble.
 
-### Configurable Prompt Templates
-All system prompts use `string.Template` variables instead of hardcoded project references:
-
-| Variable | Scope | Config Field |
-|----------|-------|-------------|
-| `$project_description` | checker, block_reverser, varmap, decompose | `project_profile.project_description` |
-| `$project_context` | reverser | `project_profile.project_context` |
-| `$custom_rules` | checker | `project_profile.checker_custom_rules` |
-
-Example in `re-agent.yaml`:
 ```yaml
-project_profile:
-  project_description: "PROJECT: MyGame (2024) — Unreal Engine 5, x64 MSVC."
-  project_context: "PROJECT CONTEXT — You are decompiling MyGame. Patterns: UE5 actor system, UObject hierarchy..."
-  checker_custom_rules: "- Verify FString/FName semantics match engine conventions"
+orchestrator:
+  enable_phase1: true   # false = skip analysis preamble, direct code gen
 ```
 
-### Token-Optimized LLM Interactions
-- **Task prompts are data-only**: All methodology lives in system prompts, task prompts contain only parameters
-- **No triple-send in fix loop**: Only parsed issues+fix_instructions sent, not the full checker report
-- **Conversation reset between fix rounds**: Prevents linear history accumulation (4x bloat in default config)
-- **Retry with exponential backoff**: 3 attempts with 1s→2s→4s→10s cap on transient API failures
-- **Conversation cleanup**: `delete_conversation()` frees accumulated history after each function
+### Few-Shot Example Retrieval
 
-### Success/Failure Improvements
-- **Checker tolerance guidance**: Counting warnings relaxed — minor structural differences with equivalent semantics are accepted
-- **Large function fallback**: Functions >500 lines that fail block reversal get a standard pipeline retry (optimized, stateless)
-- **Objective verifier as quality gate**: Free sanity check runs before the LLM checker to catch obvious misses
+5700+ successfully decompiled functions are indexed by structural features (line count, vtable density, global reference count). Before each reversal, 2 similar examples are retrieved and injected into the reverser prompt as reference. This provides the LLM with in-project naming conventions, vtable dispatch patterns, and code style.
+
+```python
+# Index is built lazily on first use from reports/re-agent/code/
+# Similarity: line bucket (4 tiers) + vtable bucket (no/light/heavy) + globals + calls
+# Lazy-loaded singleton, shared across all reverser instances
+```
+
+### Pre-Classification + Strategy Selection
+
+Functions are pre-classified by their decompile characteristics before strategy selection:
+
+| Class | Characteristics | Strategy |
+|-------|----------------|----------|
+| `leaf` | 0 calls, 0 vtables | Skip block reversal, 2 rounds |
+| `getter-setter` | ≤2 calls, no vtables, <20 lines | Skip block reversal, 2 rounds |
+| `vtable-heavy` | ≥5 vtable dispatches | Pro model, 5 rounds |
+| `win32-api` | GetProcAddress/LoadLibrary/RegisterClass | Skip LLM checker |
+| `complex-state-machine` | ≥200 lines, ≥10 calls | Block-level decomposition |
+| `general` | Default | Standard pipeline |
+
+### Block Splitter: if/else Chain Grouping
+
+Instead of splitting `if {} else if {} else {}` into 3 separate blocks, the splitter now groups entire conditional chains into a single logical block. This eliminates orphaned `else` fragments that the LLM couldn't meaningfully reverse.
+
+### Stagnation Detection
+
+Fix loops now track issue count across rounds. If 2 consecutive rounds produce the same verdict with the same-or-worse issue count, the loop terminates early — avoiding wasted LLM calls on irrecoverable functions.
+
+### Structural Diff (Non-LLM)
+
+Before the LLM checker runs, a non-LLM structural comparison extracts call order and control flow counts from both decompile and reversed code. The summary is injected into the checker prompt as additional context:
+
+```
+Structural pre-analysis: call_count: decompile=12 reversed=10 | missing_calls: malloc, free | control_flow: decompile=8 reversed=8
+```
+
+This lets the LLM checker focus on semantic issues rather than recounting calls.
+
+### Targeted Fix (Surgical Block Corrections)
+
+In the block-level fix loop, checker issues are matched to specific blocks. When re-reversing, only affected blocks are sent to the LLM along with the checker's specific critique for that block. Unaffected blocks are reused from the previous round.
+
+### Token Tracking
+
+LLM providers now track cumulative token usage:
+```python
+provider.total_prompt_tokens     # Cumulative input tokens
+provider.total_completion_tokens # Cumulative output tokens
+provider.total_calls             # Total API calls made
+```
+
+### EFLAGS / Noise Stripping
+
+Ghidra decompile output is cleaned before being sent to the LLM:
+- `byte in_CF;` / `byte in_ZF;` … EFLAGS register declarations removed
+- `undefined4 unaff_EDI;` … unaffiliated register declarations removed
+- WARNING comments stripped
+
+This reduces decompile size by ~25% and prevents the LLM from incorrectly declaring CPU flags as function-local variables.
+
+### Flash=Translation, Pro=Reasoning
+
+Variable mapping (semantic naming of Ghidra auto-generated variables) always uses the pro model. The flash model is used only for translation of individual blocks — never for reasoning tasks. This prevents common flash-model failures where variable types and names are misidentified.
+
+### Stateless Checker
+
+The checker no longer maintains conversation state between rounds. Each verification call is a fresh `[system → user]` message pair — avoiding accumulated decompile text from previous rounds that provided zero additional value.
+
+### Gzip-Friendly Stitch Validation
+
+`_stitch()` now validates assembled blocks: brace balance checking and block count mismatch detection produce warnings when the block reverser produces syntactically broken output.
 
 ## Requirements
 
@@ -138,6 +187,7 @@ backend:
 
 orchestrator:
   optimize: true             # reset conversations between fix rounds
+  enable_phase1: true        # false = skip Phase 1 analysis, direct code gen (-30% output tokens)
   max_review_rounds: 4
   max_functions_per_class: 10
   objective_verifier_enabled: true
@@ -148,7 +198,7 @@ orchestrator:
   block_max_lines: 40
 
 project_profile:
-  source_root: ./source/game_sa
+  source_root: ./reports/re-agent/code  # for few-shot example retrieval
   hook_patterns:
     - 'RH_ScopedInstall\s*\(\s*(\w+)\s*,\s*(0x[0-9A-Fa-f]+)'
   stub_markers: ["NOTSA_UNREACHABLE"]
@@ -164,20 +214,22 @@ See [docs/configuration.md](docs/configuration.md) for all options.
 
 ### Pipeline by Function Size
 
-| Lines | Strategy |
-|-------|----------|
-| < 100 | Standard reverser → checker → fix loop |
-| 100-500 | Block-level: flash (fast_mode) first, pro-model escalation on FAIL |
-| 500-1000 | Block-level flash first, fallback to optimized standard pipeline on FAIL |
-| > 1000 | Block-level flash only (skip LLM checker + variable mapping) |
+| Lines | Classification | Strategy |
+|-------|---------------|----------|
+| < 100 (leaf) | 0 calls, 0 vtables | Skip block reversal, 2 rounds, flash model |
+| < 100 | Standard | Reverser → checker → fix loop |
+| 100-500 | General | Block-level: flash (fast_mode) first, pro-model escalation on FAIL. Few-shot + structural diff active |
+| 500-1000 | Complex | Block-level flash first, fallback to optimized standard pipeline on FAIL. Per-block targeted fix |
+| > 1000 | Huge | Block-level flash only (skip LLM checker + variable mapping). Trust objective verifier |
 
 ### Model Selection
 
-| Task | Model |
-|------|-------|
-| Checking, variable mapping, decomposition | `llm.model` (pro) |
-| Block reversals (fast_mode) | `llm.block_model` if set, else `llm.model` |
-| Block reversals (hybrid, large blocks) | `llm.model` (pro) |
+| Task | Model | Notes |
+|------|-------|-------|
+| Variable mapping | `llm.model` (pro) | **Always pro** — flash cannot reliably infer names from decompile |
+| Checking, decomposition | `llm.model` (pro) | Semantic reasoning required |
+| Block reversals (fast, small) | `llm.block_model` (flash) | Translation only — mapping already provided by pro |
+| Block reversals (hybrid, large blocks) | `llm.model` (pro) | Complex logic requires pro reasoning |
 
 ## CLI Reference
 
