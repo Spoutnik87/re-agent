@@ -82,8 +82,8 @@ def reverse_blocks(
     if line_count < block_threshold_lines:
         return _empty_result(target)
 
-    # Recursive path — only for 200-500 line functions with checker enabled
-    # For larger functions (skip_checker/skip_var_mapping), use block-level only
+    # Recursive path — only for >500 line functions with checker enabled
+    # (skip_checker/skip_var_mapping must both be False so this is rare)
     if should_use_recursive(decompiled) and not skip_checker and not skip_var_mapping:
         decomposer = RecursiveDecomposer(llm, block_llm=block_llm, project_description=project_description)
         full_code = decomposer.decompose_and_reverse(
@@ -119,6 +119,9 @@ def reverse_blocks(
             )
 
         fr = 0
+        last_verdict_rec = cv.verdict
+        last_issue_count_rec = len(cv.issues) if cv else 999
+        last_change_round_rec = 0
         while (cv.verdict != Verdict.PASS or (ov and ov.verdict == Verdict.FAIL)) and fr < max_fix_rounds:
             fr += 1
             decomposer._block_agent.reset_conversation()
@@ -145,6 +148,15 @@ def reverse_blocks(
                 cv = CheckerVerdict(
                     verdict=Verdict.PASS, summary="Objective verifier passed", issues=[], fix_instructions=[]
                 )
+            current_issue_count_rec = len(cv.issues) if cv else 999
+            if cv.verdict == last_verdict_rec and current_issue_count_rec >= last_issue_count_rec:
+                if fr - last_change_round_rec >= 2:
+                    logger.info("%s: recursive fix loop stagnated after %d rounds, stopping", target.address, fr)
+                    break
+            else:
+                last_change_round_rec = fr
+                last_verdict_rec = cv.verdict
+                last_issue_count_rec = current_issue_count_rec
 
         ok = cv.verdict == Verdict.PASS and (ov is None or ov.verdict != Verdict.FAIL)
         return ReversalResult(
@@ -199,10 +211,22 @@ def reverse_blocks(
         var_context: str,
         decompiled: str,
         reset_conv: bool = False,
-    ) -> list[str]:
+        only_block_ids: set[str] | None = None,
+        previous_code: dict[str, str] | None = None,
+    ) -> tuple[list[str], dict[str, str]]:
         reversed_blocks: dict[str, str] = {}
-        all_code = []
+        all_code: list[str] = []
         for block in split.blocks:
+            if (
+                only_block_ids is not None
+                and block.id not in only_block_ids
+                and previous_code
+                and block.id in previous_code
+            ):
+                bc = previous_code[block.id]
+                reversed_blocks[block.id] = bc
+                all_code.append(bc)
+                continue
             bl = len(block.decompiled_text.splitlines())
             if (not fast) and (bl > max_block_lines) and agent_pro is not None:
                 agent: BlockReverserAgent = agent_pro
@@ -226,9 +250,9 @@ def reverse_blocks(
             )
             reversed_blocks[bid] = bc
             all_code.append(bc)
-        return all_code
+        return all_code, reversed_blocks
 
-    all_code = _reverse_all_blocks(
+    all_code, reversed_blocks = _reverse_all_blocks(
         split,
         block_agent_fast,
         block_agent_pro,
@@ -296,9 +320,13 @@ def reverse_blocks(
 
     # Fix loop
     fr = 0
+    last_verdict = cv.verdict
+    last_issue_count = len(cv.issues) if cv else 999
+    last_change_round = 0
     while (cv.verdict != Verdict.PASS or (ov and ov.verdict == Verdict.FAIL)) and fr < max_fix_rounds:
         fr += 1
-        all_code = _reverse_all_blocks(
+        affected = _find_affected_blocks(cv.issues, split) if cv else None
+        all_code, reversed_blocks = _reverse_all_blocks(
             split,
             block_agent_fast,
             block_agent_pro,
@@ -307,6 +335,8 @@ def reverse_blocks(
             var_context,
             decompiled,
             reset_conv=True,
+            only_block_ids=affected,
+            previous_code=reversed_blocks,
         )
         full_code = _stitch(split, all_code)
         if not full_code:
@@ -327,6 +357,16 @@ def reverse_blocks(
             cv = CheckerVerdict(
                 verdict=Verdict.PASS, summary="Objective verifier passed", issues=[], fix_instructions=[]
             )
+        # Early termination: stop if no improvement for 2 consecutive rounds
+        current_issue_count = len(cv.issues) if cv else 999
+        if cv.verdict == last_verdict and current_issue_count >= last_issue_count:
+            if fr - last_change_round >= 2:
+                logger.info("%s: fix loop stagnated after %d rounds, stopping", target.address, fr)
+                break
+        else:
+            last_change_round = fr
+            last_verdict = cv.verdict
+            last_issue_count = current_issue_count
 
     ok = cv.verdict == Verdict.PASS and (ov is None or ov.verdict != Verdict.FAIL)
     return ReversalResult(
@@ -339,6 +379,22 @@ def reverse_blocks(
         rounds_used=1 + fr,
         success=ok,
     )
+
+
+def _find_affected_blocks(issues: list[str], split: SplitResult) -> set[str] | None:
+    """Identify blocks referenced in checker issues.
+
+    Returns a set of block IDs to re-reverse, or ``None`` if no blocks
+    could be identified (triggering a full re-reversal).
+    """
+    if not issues:
+        return None
+    all_text = " ".join(issues).lower()
+    affected: set[str] = set()
+    for block in split.blocks:
+        if block.id in all_text or block.label.lower() in all_text:
+            affected.add(block.id)
+    return affected if affected else None
 
 
 def _stitch(split: SplitResult, reversed_parts: list[str]) -> str:

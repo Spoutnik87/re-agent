@@ -1,4 +1,4 @@
-"""Recursive decomposition for very large functions (>200 lines).
+"""Recursive decomposition for very large functions (>500 lines).
 
 When a function or block exceeds the comfortable reversal size, asks the LLM
 to identify logical sub-sections, then reverses each sub-section independently
@@ -7,6 +7,7 @@ and stitches them together.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -22,7 +23,7 @@ DECOMPOSE_PLAN_RE = re.compile(
     re.I,
 )
 
-RECURSIVE_THRESHOLD = 200  # Lines above which recursive decomposition is used
+RECURSIVE_THRESHOLD = 500  # Lines above which recursive decomposition is used
 BLOCK_RECURSIVE_THRESHOLD = 60  # Lines above which a single block is recursively split
 
 
@@ -40,6 +41,8 @@ class RecursiveDecomposer:
             project_description=project_description,
         )
         self._block_agent = BlockReverserAgent(_block_llm, project_description=project_description)
+        self._cached_plan: list[tuple[str, int, int, str]] | None = None
+        self._cached_decompiled_hash: str = ""
 
     def should_split_block(self, block: Block) -> bool:
         return decompiled_line_count(block.decompiled_text) >= BLOCK_RECURSIVE_THRESHOLD
@@ -116,7 +119,12 @@ class RecursiveDecomposer:
         """Ask the LLM to produce a decomposition plan.
 
         Returns list of (section_id, start_line, end_line, description).
+        Cached per decompiled input to avoid redundant LLM calls across fix rounds.
         """
+        decompiled_hash = hashlib.md5(decompiled.encode()).hexdigest()
+        if self._cached_plan is not None and self._cached_decompiled_hash == decompiled_hash:
+            return self._cached_plan
+
         task_prompt = render_template(
             PROMPTS_DIR / "decompose_task.md",
             decompiled=decompiled,
@@ -140,6 +148,8 @@ class RecursiveDecomposer:
             desc = match.group(4).strip()
             plan.append((section_id, start, end, desc))
 
+        self._cached_plan = plan
+        self._cached_decompiled_hash = decompiled_hash
         return plan
 
 

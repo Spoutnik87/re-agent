@@ -19,6 +19,19 @@ from re_agent.parity.source_indexer import SourceIndexer
 logger = logging.getLogger(__name__)
 
 
+def _compute_max_fix_rounds(line_count: int, max_rounds: int) -> int:
+    """Scale fix rounds based on function size to avoid excessive LLM calls.
+
+    Large functions require more tokens per round; reducing rounds
+    prevents timeout on the fix loop.
+    """
+    if line_count > 400:
+        return min(max_rounds, 1)
+    if line_count > 200:
+        return min(max_rounds, 2)
+    return max_rounds
+
+
 def reverse_single(
     target: FunctionTarget,
     config: ReAgentConfig,
@@ -54,6 +67,14 @@ def reverse_single(
             decompile = backend.decompile(target.address)
             line_count = decompiled_line_count(decompile.raw_output)
             if line_count >= config.orchestrator.block_threshold_lines:
+                effective_max_rounds = _compute_max_fix_rounds(line_count, config.orchestrator.max_review_rounds)
+                logger.info(
+                    "%s: %d lines — effective max fix rounds: %d (from %d)",
+                    target.address,
+                    line_count,
+                    effective_max_rounds,
+                    config.orchestrator.max_review_rounds,
+                )
                 block_kwargs = dict(
                     target=target,
                     backend=backend,
@@ -61,7 +82,7 @@ def reverse_single(
                     block_llm=block_llm,
                     block_threshold_lines=config.orchestrator.block_threshold_lines,
                     max_block_lines=config.orchestrator.block_max_lines,
-                    max_fix_rounds=config.orchestrator.max_review_rounds,
+                    max_fix_rounds=effective_max_rounds,
                     objective_verifier_enabled=config.orchestrator.objective_verifier_enabled,
                     objective_call_count_tolerance=config.orchestrator.objective_call_count_tolerance,
                     objective_control_flow_tolerance=config.orchestrator.objective_control_flow_tolerance,
@@ -118,7 +139,24 @@ def reverse_single(
                 target.address,
                 exc_info=True,
             )
-            block_result = None
+            if "line_count" in locals() and line_count >= config.orchestrator.block_threshold_lines:
+                logger.info(
+                    "%s: blocking fallback — function too large (%d lines) for standard pipeline",
+                    target.address,
+                    line_count,
+                )
+                block_result = ReversalResult(
+                    target=target,
+                    code="",
+                    checker_verdict=None,
+                    objective_verdict=None,
+                    parity_status=None,
+                    parity_findings=[],
+                    rounds_used=0,
+                    success=False,
+                )
+            else:
+                block_result = None
 
         if block_result is not None:
             _write_code(block_result, target, config, output_dir)
