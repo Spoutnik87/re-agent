@@ -42,6 +42,9 @@ class ClaudeProvider:
         self._max_tokens = max_tokens
         self._temperature = temperature
         self._conversations: dict[str, list[Message]] = {}
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
+        self.total_calls: int = 0
 
     # -- LLMProvider interface ------------------------------------------------
 
@@ -66,6 +69,11 @@ class ClaudeProvider:
             create_kwargs["system"] = system_text
 
         response = self._call_with_retry(self._client.messages.create, create_kwargs)
+
+        if hasattr(response, "usage") and response.usage:
+            self.total_prompt_tokens += response.usage.input_tokens or 0
+            self.total_completion_tokens += response.usage.output_tokens or 0
+        self.total_calls += 1
 
         parts: list[str] = []
         for block in response.content:

@@ -48,6 +48,9 @@ class OpenAIProvider:
         self._max_tokens = max_tokens
         self._temperature = temperature
         self._conversations: dict[str, list[Message]] = {}
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
+        self.total_calls: int = 0
 
     # -- LLMProvider interface ------------------------------------------------
 
@@ -66,6 +69,10 @@ class OpenAIProvider:
         )
 
         choice = response.choices[0]
+        if hasattr(response, "usage") and response.usage:
+            self.total_prompt_tokens += response.usage.prompt_tokens or 0
+            self.total_completion_tokens += response.usage.completion_tokens or 0
+        self.total_calls += 1
         return choice.message.content or ""
 
     @staticmethod

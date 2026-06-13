@@ -26,6 +26,7 @@ from re_agent.core.models import (
 )
 from re_agent.llm.protocol import LLMProvider
 from re_agent.orchestrator.recursive import RecursiveDecomposer, should_use_recursive
+from re_agent.orchestrator.stagnation import StagnationTracker
 from re_agent.utils.text import strip_ghidra_noise
 from re_agent.verification.objective import verify_candidate
 
@@ -120,10 +121,8 @@ def reverse_blocks(
             )
 
         fr = 0
-        last_verdict_rec = cv.verdict
-        last_issue_count_rec = len(cv.issues) if cv else 999
-        last_change_round_rec = 0
-        while (cv.verdict != Verdict.PASS or (ov and ov.verdict == Verdict.FAIL)) and fr < max_fix_rounds:
+        rec_tracker = StagnationTracker()
+        while not StagnationTracker.is_pass(cv, ov) and fr < max_fix_rounds:
             fr += 1
             decomposer._block_agent.reset_conversation()
             full_code = decomposer.decompose_and_reverse(
@@ -150,15 +149,9 @@ def reverse_blocks(
                 cv = CheckerVerdict(
                     verdict=Verdict.PASS, summary="Objective verifier passed", issues=[], fix_instructions=[]
                 )
-            current_issue_count_rec = len(cv.issues) if cv else 999
-            if cv.verdict == last_verdict_rec and current_issue_count_rec >= last_issue_count_rec:
-                if fr - last_change_round_rec >= 2:
-                    logger.info("%s: recursive fix loop stagnated after %d rounds, stopping", target.address, fr)
-                    break
-            else:
-                last_change_round_rec = fr
-                last_verdict_rec = cv.verdict
-                last_issue_count_rec = current_issue_count_rec
+            if rec_tracker.update(cv):
+                logger.info("%s: recursive fix loop stagnated after %d rounds, stopping", target.address, fr)
+                break
 
         ok = cv.verdict == Verdict.PASS and (ov is None or ov.verdict != Verdict.FAIL)
         return ReversalResult(
@@ -184,7 +177,8 @@ def reverse_blocks(
     _block_fast = block_llm if block_llm is not None else llm
     _block_pro = llm
 
-    # Variable mapping — skip for very large functions (>1000 lines)
+    # Variable mapping — always use pro model for semantic reasoning.
+    # Flash model cannot reliably infer variable names/types from decompile.
     var_mapping = ""
     if not skip_var_mapping:
         var_mapping = generate_variable_mapping(
@@ -192,7 +186,7 @@ def reverse_blocks(
             class_name=target.class_name,
             function_name=target.function_name,
             address=target.address,
-            llm=_reasoning,
+            llm=llm,
             project_description=project_description,
         )
 
@@ -324,10 +318,8 @@ def reverse_blocks(
 
     # Fix loop
     fr = 0
-    last_verdict = cv.verdict
-    last_issue_count = len(cv.issues) if cv else 999
-    last_change_round = 0
-    while (cv.verdict != Verdict.PASS or (ov and ov.verdict == Verdict.FAIL)) and fr < max_fix_rounds:
+    blk_tracker = StagnationTracker()
+    while not StagnationTracker.is_pass(cv, ov) and fr < max_fix_rounds:
         fr += 1
         # Recompute var_mapping if checker flagged naming/type issues
         if cv and _has_naming_issues(cv.issues) and not skip_var_mapping:
@@ -373,16 +365,9 @@ def reverse_blocks(
             cv = CheckerVerdict(
                 verdict=Verdict.PASS, summary="Objective verifier passed", issues=[], fix_instructions=[]
             )
-        # Early termination: stop if no improvement for 2 consecutive rounds
-        current_issue_count = len(cv.issues) if cv else 999
-        if cv.verdict == last_verdict and current_issue_count >= last_issue_count:
-            if fr - last_change_round >= 2:
-                logger.info("%s: fix loop stagnated after %d rounds, stopping", target.address, fr)
-                break
-        else:
-            last_change_round = fr
-            last_verdict = cv.verdict
-            last_issue_count = current_issue_count
+        if blk_tracker.update(cv):
+            logger.info("%s: fix loop stagnated after %d rounds, stopping", target.address, fr)
+            break
 
     ok = cv.verdict == Verdict.PASS and (ov is None or ov.verdict != Verdict.FAIL)
     return ReversalResult(
@@ -437,7 +422,21 @@ def _stitch(split: SplitResult, reversed_parts: list[str]) -> str:
     cleaned = [p.strip() for p in reversed_parts if p.strip()]
     if not cleaned:
         return ""
+    if len(cleaned) != split.num_blocks:
+        logger.warning(
+            "_stitch: block count mismatch — split has %d blocks but got %d reversed parts",
+            split.num_blocks,
+            len(cleaned),
+        )
     body = "\n".join(cleaned)
+    opens = body.count("{")
+    closes = body.count("}")
+    if opens != closes:
+        logger.warning(
+            "_stitch: unbalanced braces — %d opens vs %d closes",
+            opens,
+            closes,
+        )
     if split.signature:
         return f"{split.signature} {{\n{body}\n}}"
     return f"{{\n{body}\n}}"

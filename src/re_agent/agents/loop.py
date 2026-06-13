@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -15,12 +16,13 @@ from re_agent.core.models import (
     FunctionTarget,
     ObjectiveVerdict,
     ReversalResult,
-    Verdict,
 )
 from re_agent.core.session import Session
 from re_agent.llm.protocol import LLMProvider
 from re_agent.parity.source_indexer import SourceIndexer
-from re_agent.verification.objective import verify_candidate
+from re_agent.verification.objective import compute_structural_summary, verify_candidate
+
+logger = logging.getLogger(__name__)
 
 
 def run_fix_loop(
@@ -80,6 +82,10 @@ def run_fix_loop(
     last_verdict: CheckerVerdict | None = None
     last_objective_verdict: ObjectiveVerdict | None = None
     cached_decompile = None
+    # Lazy import to break circular import: loop → orchestrator.stagnation → orchestrator.__init__ → loop
+    from re_agent.orchestrator.stagnation import StagnationTracker
+
+    tracker = StagnationTracker()
 
     for round_num in range(1, max_rounds + 1):
         timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -116,10 +122,14 @@ def run_fix_loop(
         # Check
         if optimize and round_num == 1:
             cached_decompile = reverser.last_decompile_result
+        structural = ""
+        if cached_decompile:
+            structural = compute_structural_summary(cached_decompile.raw_output, code)
         verdict = checker.check(
             code,
             target,
             decompile_result=cached_decompile if optimize else None,
+            structural_summary=structural,
         )
         last_verdict = verdict
 
@@ -153,7 +163,7 @@ def run_fix_loop(
             check_path = log_dir / f"round{round_num}-{timestamp}-checker.json"
             check_path.write_text(json.dumps(check_log, indent=2), encoding="utf-8")
 
-        if verdict.verdict == Verdict.PASS and (objective_verdict is None or objective_verdict.verdict != Verdict.FAIL):
+        if StagnationTracker.is_pass(verdict, objective_verdict):
             cleanup_loop(reverser, checker)
             return ReversalResult(
                 target=target,
@@ -165,6 +175,9 @@ def run_fix_loop(
                 rounds_used=round_num,
                 success=True,
             )
+        if tracker.update(verdict):
+            logger.info("%s: fix loop stagnated after %d rounds, stopping", target.address, round_num)
+            break
 
     # Exhausted all rounds
     cleanup_loop(reverser, checker)

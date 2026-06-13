@@ -35,6 +35,7 @@ class CheckerAgent:
         code: str,
         target: FunctionTarget,
         decompile_result: DecompileResult | None = None,
+        structural_summary: str = "",
     ) -> CheckerVerdict:
         """Check reversed code against decompilation. Returns CheckerVerdict.
 
@@ -47,6 +48,9 @@ class CheckerAgent:
             target: Function identification.
             decompile_result: Pre-fetched decompile result. When provided,
                 skips the redundant backend call (optimized path).
+            structural_summary: Pre-computed non-LLM call order and control
+                flow comparison. Injected into the prompt so the LLM
+                checker can focus on semantic issues.
         """
         if decompile_result is not None:
             decompiled = decompile_result.raw_output
@@ -67,6 +71,8 @@ class CheckerAgent:
             reversed_code=code,
             decompiled=decompiled,
         )
+        if structural_summary:
+            task_prompt += f"\n\n**Structural pre-analysis (non-LLM):**\n{structural_summary}"
 
         self.last_prompt = task_prompt
         messages = [

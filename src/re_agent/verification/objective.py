@@ -2,9 +2,76 @@
 
 from __future__ import annotations
 
+import re
+
 from re_agent.backend.protocol import REBackend
 from re_agent.core.models import DecompileResult, FunctionTarget, ObjectiveVerdict, Verdict
 from re_agent.utils.text import count_calls, count_control_flow, strip_comments
+
+CALL_SEQ_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_:]*)\s*\(")
+CPP_KEYWORDS = frozenset(
+    {
+        "if",
+        "for",
+        "while",
+        "switch",
+        "return",
+        "sizeof",
+        "decltype",
+        "static_cast",
+        "reinterpret_cast",
+        "const_cast",
+        "dynamic_cast",
+        "catch",
+        "new",
+        "delete",
+    }
+)
+
+
+def _extract_call_order(body_no_comments: str) -> list[str]:
+    """Extract ordered list of function call names from source."""
+    calls: list[str] = []
+    for m in CALL_SEQ_RE.finditer(body_no_comments):
+        name = m.group(1)
+        if name in CPP_KEYWORDS:
+            continue
+        calls.append(name)
+    return calls
+
+
+def compute_structural_summary(decompiled_text: str, reversed_code: str) -> str:
+    """Compute a non-LLM structural comparison summary.
+
+    Returns a concise text suitable for injection into the checker prompt
+    to help the LLM focus on semantic issues rather than recounting calls.
+    """
+    decomp_body = strip_comments(_extract_body(reversed_code))
+    rev_body = strip_comments(_extract_body(decompiled_text))
+
+    decomp_calls = _extract_call_order(decomp_body)
+    rev_calls = _extract_call_order(rev_body)
+
+    decomp_cf = count_control_flow(decomp_body)
+    rev_cf = count_control_flow(rev_body)
+
+    lines = []
+    lines.append(f"Calls: decompile={len(decomp_calls)} reversed={len(rev_calls)}")
+    if decomp_calls != rev_calls:
+        lines.append(f"  Decompile call order: {' → '.join(decomp_calls[:12])}")
+        lines.append(f"  Reversed call order:  {' → '.join(rev_calls[:12])}")
+        missing = [c for c in decomp_calls if c not in rev_calls]
+        extra = [c for c in rev_calls if c not in decomp_calls]
+        if missing:
+            lines.append(f"  Missing calls: {', '.join(missing[:8])}")
+        if extra:
+            lines.append(f"  Extra calls: {', '.join(extra[:8])}")
+    else:
+        lines.append("  Call order: IDENTICAL")
+
+    lines.append(f"Control flow: decompile={decomp_cf} reversed={rev_cf}")
+
+    return "\n".join(lines)
 
 
 def verify_candidate(

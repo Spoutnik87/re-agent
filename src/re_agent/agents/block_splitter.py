@@ -111,9 +111,9 @@ def split_decompiled_function(decompiled: str, max_block_lines: int = MAX_BLOCK_
     complete function body.
 
     Splitting happens at:
-    - ``if``, ``else if``, ``else`` at depth 0
+    - ``if`` at depth 0 (starts a new block; ``else``/``else if`` are absorbed into it)
     - ``for``, ``while``, ``do`` at depth 0
-    - ``switch`` at depth 0
+    - ``switch`` at depth 0 (``case``/``default`` absorbed)
     - ``return`` at depth 0 (marks the exit block)
     - ``LAB_xxx:`` goto labels at depth 0
     """
@@ -250,11 +250,12 @@ def split_decompiled_function(decompiled: str, max_block_lines: int = MAX_BLOCK_
         ret_match = RETURN_RE.match(line)
         lbl_match = LABEL_RE.match(line)
 
-        is_split_point = (
-            depth == 0
-            and (cf_match or ret_match or lbl_match)
-            and new_depth != depth  # line changes depth (has braces or semicolon)
-        )
+        kw_lower = cf_match.group(1).lower() if cf_match else ""
+
+        # else/else-if are absorbed into their preceding if block — never split
+        is_absorbed = depth == 0 and kw_lower in ("else", "else if", "case", "default")
+
+        is_split_point = depth == 0 and (cf_match or ret_match or lbl_match) and not is_absorbed and new_depth != depth
         # Also split on simple return at depth 0 (no braces)
         if depth == 0 and ret_match and opens == 0 and closes == 0:
             is_split_point = True
@@ -263,13 +264,13 @@ def split_decompiled_function(decompiled: str, max_block_lines: int = MAX_BLOCK_
             flush()
             if cf_match:
                 kw = cf_match.group(1)
-                if kw in ("if", "else if", "else"):
+                if kw in ("if",):
                     current_label = f"branch_{branch_idx}"
                     branch_idx += 1
                 elif kw in ("for", "while", "do"):
                     current_label = f"loop_{loop_idx}"
                     loop_idx += 1
-                elif kw in ("switch", "case", "default"):
+                elif kw in ("switch",):
                     current_label = f"switch_{switch_idx}"
                     switch_idx += 1
             elif lbl_match:
