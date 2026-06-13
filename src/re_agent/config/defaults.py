@@ -51,6 +51,8 @@ parity:
   cache_dir: ".cache/re-agent-parity"
 
 orchestrator:
+  optimize: true
+  enable_phase1: true
   max_review_rounds: 4
   max_functions_per_class: 10
   objective_verifier_enabled: true

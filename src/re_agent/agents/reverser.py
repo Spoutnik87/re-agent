@@ -6,6 +6,7 @@ import logging
 import re
 from pathlib import Path
 
+from re_agent.agents.few_shot_builder import FewShotBuilder
 from re_agent.agents.source_context import SourceContextBuilder
 from re_agent.backend.protocol import REBackend
 from re_agent.config.schema import ProjectProfile
@@ -38,15 +39,24 @@ class ReverserAgent:
         session: Session | None = None,
         report_dir: Path | None = None,
         optimize: bool = False,
+        enable_phase1: bool = True,
     ) -> None:
         self.llm = llm
         self.backend = backend
         self.optimize = optimize
+        self.enable_phase1 = enable_phase1
         project_context = project_profile.project_context if project_profile else ""
         self._system_prompt = render_template(
             PROMPTS_DIR / "reverser_system.md",
             project_context=project_context,
         )
+        if not enable_phase1:
+            self._system_prompt += (
+                "\n\nDO NOT produce a Phase 1 analysis. "
+                "Output ONLY the reversed C++ code in a ```cpp block, "
+                "with inline comments for key decisions. "
+                "End with REVERSED_FUNCTION: tag."
+            )
         self._source_context_builder: SourceContextBuilder | None = None
         if source_root is not None and project_profile is not None and source_root.exists():
             self._source_context_builder = SourceContextBuilder(
@@ -61,6 +71,9 @@ class ReverserAgent:
         self.last_response: str = ""
         self.last_decompile_result: DecompileResult | None = None
         self._phase1_analysis: str = ""
+        self._few_shot_builder: FewShotBuilder | None = None
+        if source_root is not None and source_root.exists():
+            self._few_shot_builder = FewShotBuilder.singleton(source_root)
 
     def reverse(self, target: FunctionTarget) -> tuple[str, str]:
         """Reverse a function. Returns (code, reversed_function_tag)."""
@@ -104,13 +117,23 @@ class ReverserAgent:
             function_name=target.function_name,
             address=target.address,
             decompiled=decompiled,
-            xrefs=xrefs_text or "None",
-            structs=structs_text or "None",
-            source_context=source_context or "None",
         )
 
         if self._conversation_id is None and self.llm.supports_conversations:
             self._conversation_id = self.llm.new_conversation(self._system_prompt)
+
+        if xrefs_text and xrefs_text not in ("None found", "Unavailable", "None"):
+            task_prompt += f"\n\n**Cross-references (calls from this function):**\n{xrefs_text}"
+        if structs_text and structs_text not in ("Unavailable", "None"):
+            task_prompt += f"\n\n**Struct/type context:**\n{structs_text}"
+        if source_context and source_context not in ("None", "No relevant existing source context found."):
+            task_prompt += f"\n\n**Existing source context:**\n{source_context}"
+
+        if self._few_shot_builder is not None:
+            examples = self._few_shot_builder.find_similar(decompiled)
+            if examples:
+                task_prompt += "\n\n**Reference examples (similar functions successfully decompiled):**\n"
+                task_prompt += "\n".join(examples)
 
         self.last_prompt = task_prompt
 
@@ -155,7 +178,6 @@ class ReverserAgent:
         self.last_prompt = fix_prompt
 
         if self.optimize:
-            # Fresh conversation each fix round: avoids compounding earlier mistakes
             messages = [
                 Message(role="system", content=self._system_prompt),
                 Message(role="user", content=fix_prompt),
@@ -168,21 +190,19 @@ class ReverserAgent:
             response = self.llm.send(messages)
 
         self.last_response = response
-        self._phase1_analysis = self._extract_phase1(response)
+        self._phase1_analysis = self._extract_phase1(response) if self.enable_phase1 else ""
         code = self._extract_code(response)
         tag = self._extract_tag(response)
         return code, tag
 
-    @staticmethod
-    def _extract_code(response: str) -> str:
-        # Prefer the code block AFTER the "Phase 2" marker when present
-        phase2_match = PHASE_2_MARKER_RE.search(response)
-        if phase2_match:
-            after_phase2 = response[phase2_match.end() :]
-            m = CODE_BLOCK_RE.search(after_phase2)
-            if m:
-                return m.group(1).strip()
-        # Fallback: first code block in response
+    def _extract_code(self, response: str) -> str:
+        if self.enable_phase1:
+            phase2_match = PHASE_2_MARKER_RE.search(response)
+            if phase2_match:
+                after_phase2 = response[phase2_match.end() :]
+                m = CODE_BLOCK_RE.search(after_phase2)
+                if m:
+                    return m.group(1).strip()
         m = CODE_BLOCK_RE.search(response)
         if m:
             return m.group(1).strip()

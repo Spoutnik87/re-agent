@@ -87,6 +87,7 @@ class OrchestratorConfig:
     """Orchestrator loop settings."""
 
     optimize: bool = True
+    enable_phase1: bool = True
     max_review_rounds: int = 4
     max_functions_per_class: int = 10
     objective_verifier_enabled: bool = True

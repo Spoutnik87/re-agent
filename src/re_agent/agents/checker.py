@@ -27,7 +27,6 @@ class CheckerAgent:
         self.backend = backend
         self._project_description = project_description
         self._checker_custom_rules = checker_custom_rules
-        self._conversation_id: str | None = None
         self.last_prompt: str = ""
         self.last_response: str = ""
 
@@ -38,6 +37,10 @@ class CheckerAgent:
         decompile_result: DecompileResult | None = None,
     ) -> CheckerVerdict:
         """Check reversed code against decompilation. Returns CheckerVerdict.
+
+        Always uses stateless messages — no conversation persistence.
+        The checker compares the same decompile against different reversed
+        code each round, so accumulated history is pure token waste.
 
         Args:
             code: The reversed C++ code to verify.
@@ -66,18 +69,11 @@ class CheckerAgent:
         )
 
         self.last_prompt = task_prompt
-
-        if self._conversation_id is None and self.llm.supports_conversations:
-            self._conversation_id = self.llm.new_conversation(system_prompt)
-
-        if self._conversation_id:
-            response = self.llm.resume(self._conversation_id, task_prompt)
-        else:
-            messages = [
-                Message(role="system", content=system_prompt),
-                Message(role="user", content=task_prompt),
-            ]
-            response = self.llm.send(messages)
+        messages = [
+            Message(role="system", content=system_prompt),
+            Message(role="user", content=task_prompt),
+        ]
+        response = self.llm.send(messages)
 
         self.last_response = response
         return self._parse_verdict(response)

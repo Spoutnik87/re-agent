@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from re_agent.backend.protocol import REBackend
-from re_agent.core.models import FunctionTarget, ObjectiveVerdict, Verdict
+from re_agent.core.models import DecompileResult, FunctionTarget, ObjectiveVerdict, Verdict
 from re_agent.utils.text import count_calls, count_control_flow, strip_comments
 
 
@@ -13,8 +13,14 @@ def verify_candidate(
     backend: REBackend,
     call_count_tolerance: int = 3,
     control_flow_tolerance: int = 2,
+    decompile_result: DecompileResult | None = None,
 ) -> ObjectiveVerdict:
-    """Return FAIL only on strong structural mismatches, else PASS/UNKNOWN."""
+    """Return FAIL only on strong structural mismatches, else PASS/UNKNOWN.
+
+    Args:
+        decompile_result: Pre-fetched decompile from a prior backend call.
+            When provided, avoids a redundant Ghidra decompile invocation.
+    """
     if not code.strip():
         return ObjectiveVerdict(
             verdict=Verdict.FAIL,
@@ -29,14 +35,17 @@ def verify_candidate(
     findings: list[str] = []
     checks_run = 0
 
-    try:
-        decompile = backend.decompile(target.address)
-    except Exception as exc:
-        return ObjectiveVerdict(
-            verdict=Verdict.UNKNOWN,
-            summary="Objective verifier could not read decompile output",
-            findings=[str(exc)],
-        )
+    if decompile_result is None:
+        try:
+            decompile = backend.decompile(target.address)
+        except Exception as exc:
+            return ObjectiveVerdict(
+                verdict=Verdict.UNKNOWN,
+                summary="Objective verifier could not read decompile output",
+                findings=[str(exc)],
+            )
+    else:
+        decompile = decompile_result
 
     decompile_body = strip_comments(_extract_body(decompile.raw_output))
     decompile_flow_count = count_control_flow(decompile_body)

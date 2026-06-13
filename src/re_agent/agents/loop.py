@@ -39,6 +39,7 @@ def run_fix_loop(
     objective_call_count_tolerance: int = 3,
     objective_control_flow_tolerance: int = 2,
     optimize: bool = False,
+    enable_phase1: bool = True,
 ) -> ReversalResult:
     """Run the reverser->checker->fix loop up to max_rounds.
 
@@ -65,6 +66,7 @@ def run_fix_loop(
         session=session,
         report_dir=report_dir,
         optimize=optimize,
+        enable_phase1=enable_phase1,
     )
 
     project_desc = project_profile.project_description if project_profile else ""
@@ -129,6 +131,7 @@ def run_fix_loop(
                 backend,
                 call_count_tolerance=objective_call_count_tolerance,
                 control_flow_tolerance=objective_control_flow_tolerance,
+                decompile_result=cached_decompile,
             )
         last_objective_verdict = objective_verdict
 
@@ -182,6 +185,3 @@ def cleanup_loop(reverser: ReverserAgent, checker: CheckerAgent) -> None:
     if reverser._conversation_id and reverser.llm.supports_conversations:
         reverser.llm.delete_conversation(reverser._conversation_id)
         reverser._conversation_id = None
-    if checker._conversation_id and checker.llm.supports_conversations:
-        checker.llm.delete_conversation(checker._conversation_id)
-        checker._conversation_id = None

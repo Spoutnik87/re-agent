@@ -87,13 +87,25 @@ GHIDRA_BOILERPLATE_STARTS = (
     "// WARNING:",
 )
 
+EFLAGS_DECL_RE = re.compile(
+    r"^\s*(byte|bool|uint|int|char|short|ushort|long|ulong)\s+"
+    r"(in_CF|in_PF|in_AF|in_ZF|in_SF|in_TF|in_IF|in_DF|in_OF|"
+    r"in_NT|in_AC|in_VIF|in_VIP|in_ID)\s*;?\s*$",
+    re.I,
+)
+
+UNAFF_DECL_RE = re.compile(
+    r"^\s*undefined[248]?\s+unaff_(E[ABCD]X|E[SD]I|EBP|ESP)\s*;?\s*$",
+    re.I,
+)
+
 
 def strip_ghidra_noise(text: str) -> str:
     """Strip Ghidra boilerplate and noise from decompile output.
 
-    Removes lines starting with WARNING comments, stack-frame annotation
-    lines, and redundant variable declarations while preserving the
-    functional decompile content.
+    Removes WARNING comments, EFLAGS register declarations (in_CF etc.),
+    unaffiliated register declarations (unaff_EDI etc.), and redundant
+    variable noise while preserving functional decompile content.
     """
     stripped: list[str] = []
     for line in text.splitlines():
@@ -106,6 +118,10 @@ def strip_ghidra_noise(text: str) -> str:
         if ls.startswith("/*") and "WARNING" in ls:
             continue
         if ls.startswith("//") and "WARNING" in ls:
+            continue
+        if EFLAGS_DECL_RE.match(ls):
+            continue
+        if UNAFF_DECL_RE.match(ls):
             continue
         stripped.append(line)
     return "\n".join(stripped).strip("\n")

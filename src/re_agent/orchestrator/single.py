@@ -119,6 +119,7 @@ def reverse_single(
                             max_rounds=config.orchestrator.max_review_rounds,
                             log_dir=log_dir,
                             optimize=config.orchestrator.optimize,
+                            enable_phase1=config.orchestrator.enable_phase1,
                             objective_verifier_enabled=config.orchestrator.objective_verifier_enabled,
                             objective_call_count_tolerance=config.orchestrator.objective_call_count_tolerance,
                             objective_control_flow_tolerance=config.orchestrator.objective_control_flow_tolerance,
@@ -181,6 +182,7 @@ def reverse_single(
         objective_call_count_tolerance=config.orchestrator.objective_call_count_tolerance,
         objective_control_flow_tolerance=config.orchestrator.objective_control_flow_tolerance,
         optimize=config.orchestrator.optimize,
+        enable_phase1=config.orchestrator.enable_phase1,
     )
 
     _write_code(result, target, config, output_dir)

@@ -105,6 +105,7 @@ def reverse_blocks(
                 backend,
                 call_count_tolerance=objective_call_count_tolerance,
                 control_flow_tolerance=objective_control_flow_tolerance,
+                decompile_result=decompile_result,
             )
 
         cv = None
@@ -141,6 +142,7 @@ def reverse_blocks(
                     backend,
                     call_count_tolerance=objective_call_count_tolerance,
                     control_flow_tolerance=objective_control_flow_tolerance,
+                    decompile_result=decompile_result,
                 )
             if ov is None or ov.verdict == Verdict.FAIL:
                 cv = checker.check(full_code, target)
@@ -275,6 +277,7 @@ def reverse_blocks(
             backend,
             call_count_tolerance=objective_call_count_tolerance,
             control_flow_tolerance=objective_control_flow_tolerance,
+            decompile_result=decompile_result,
         )
         ok = ov.verdict != Verdict.FAIL
         return ReversalResult(
@@ -304,6 +307,7 @@ def reverse_blocks(
             backend,
             call_count_tolerance=objective_call_count_tolerance,
             control_flow_tolerance=objective_control_flow_tolerance,
+            decompile_result=decompile_result,
         )
 
     # Only run LLM checker if objective verifier fails or is insufficient
@@ -325,6 +329,17 @@ def reverse_blocks(
     last_change_round = 0
     while (cv.verdict != Verdict.PASS or (ov and ov.verdict == Verdict.FAIL)) and fr < max_fix_rounds:
         fr += 1
+        # Recompute var_mapping if checker flagged naming/type issues
+        if cv and _has_naming_issues(cv.issues) and not skip_var_mapping:
+            logger.info("%s: checker flagged naming issues — regenerating var_mapping", target.address)
+            var_mapping = generate_variable_mapping(
+                decompiled=decompiled,
+                class_name=target.class_name,
+                function_name=target.function_name,
+                address=target.address,
+                llm=_reasoning,
+                project_description=project_description,
+            )
         affected = _find_affected_blocks(cv.issues, split) if cv else None
         all_code, reversed_blocks = _reverse_all_blocks(
             split,
@@ -350,6 +365,7 @@ def reverse_blocks(
                 backend,
                 call_count_tolerance=objective_call_count_tolerance,
                 control_flow_tolerance=objective_control_flow_tolerance,
+                decompile_result=decompile_result,
             )
         if ov is None or ov.verdict == Verdict.FAIL:
             cv = checker.check(full_code, target)
@@ -379,6 +395,24 @@ def reverse_blocks(
         rounds_used=1 + fr,
         success=ok,
     )
+
+
+def _has_naming_issues(issues: list[str]) -> bool:
+    """Check if any checker issue is related to variable naming or types."""
+    naming_keywords = (
+        "variable",
+        "name",
+        "type",
+        "rename",
+        "identifier",
+        "incorrect type",
+        "wrong type",
+        "naming",
+        "undefined",
+        "mapping",
+    )
+    combined = " ".join(issues).lower()
+    return any(kw in combined for kw in naming_keywords)
 
 
 def _find_affected_blocks(issues: list[str], split: SplitResult) -> set[str] | None:
