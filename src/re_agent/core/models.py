@@ -273,7 +273,7 @@ class ManualCheckEntry:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class PipelineProfile:
     """Execution profile derived from function classification.
 
@@ -286,7 +286,7 @@ class PipelineProfile:
     inject_source_context: bool
     inject_few_shot: bool
     use_objective_verifier: bool
-    few_shot_max_examples: int = 2
+    few_shot_max_examples: int = 0
 
 
 _PROFILES: dict[str, PipelineProfile] = {

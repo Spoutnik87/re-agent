@@ -20,6 +20,7 @@ def test_getter_setter_profile_matches_leaf() -> None:
     assert p.inject_source_context is False
     assert p.inject_few_shot is False
     assert p.use_objective_verifier is False
+    assert p.few_shot_max_examples == 0
 
 
 def test_win32_profile() -> None:
@@ -64,3 +65,5 @@ def test_unknown_classification_falls_back_to_general() -> None:
     p = profile_for("unknown-type")
     assert p.max_rounds == 4
     assert p.inject_few_shot is True
+    assert p.enable_phase1 is True
+    assert p.use_objective_verifier is True
