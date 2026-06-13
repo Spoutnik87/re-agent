@@ -213,6 +213,10 @@ def reverse_blocks(
     ) -> tuple[list[str], dict[str, str]]:
         reversed_blocks: dict[str, str] = {}
         all_code: list[str] = []
+        if reset_conv:
+            agent_fast.reset_conversation()
+            if agent_pro is not None:
+                agent_pro.reset_conversation()
         for block in split.blocks:
             if (
                 only_block_ids is not None
@@ -231,8 +235,6 @@ def reverse_blocks(
             else:
                 agent = agent_fast
                 ctx = var_context
-            if reset_conv:
-                agent.reset_conversation()
             # Inject targeted checker issues into variable mapping context
             issue_hint = ""
             if targeted_issues and block.id in targeted_issues:
