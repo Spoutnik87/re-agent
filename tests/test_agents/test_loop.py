@@ -407,6 +407,28 @@ def test_loop_respects_profile_max_rounds() -> None:
     assert len(chk_llm.send_calls) == 1
 
 
+def test_loop_breaks_when_code_unchanged_between_rounds() -> None:
+    """If the reverser produces identical code two rounds in a row, break without checker call."""
+    target = FunctionTarget(address="0x200", class_name="C", function_name="g")
+    backend = StubBackend()
+
+    # Reverser always returns same code
+    same_code = "```cpp\nvoid C::g() { call1(); }\n```\nREVERSED_FUNCTION: C::g (0x200)"
+    fail_resp = "VERDICT: FAIL\nSUMMARY: Still wrong\nISSUES:\n- bad\nFIX_INSTRUCTIONS:\n- fix it"
+
+    rev_llm = NonConvMockLLM([same_code] * 4)
+    chk_llm = NonConvMockLLM([fail_resp] * 4)
+
+    result = run_fix_loop(target, backend, rev_llm, chk_llm, max_rounds=4)
+
+    # Round 1: reverse + check. Round 2: reverse produces same code → break.
+    # Checker should NOT be called in round 2.
+    assert not result.success
+    assert result.rounds_used <= 2
+    # checker called at most once (round 1 only)
+    assert len(chk_llm.send_calls) <= 1
+
+
 def test_loop_profile_disables_objective_verifier() -> None:
     """run_fix_loop with use_objective_verifier=False should not run structural checks."""
     from re_agent.core.models import PipelineProfile
