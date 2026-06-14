@@ -229,9 +229,7 @@ def test_inject_few_shot_false_skips_few_shot_injection(tmp_path: Path) -> None:
     from re_agent.agents.few_shot_builder import FewShotBuilder
 
     FewShotBuilder.clear_cache()
-    (tmp_path / "0x111_CFoo_bar.cpp").write_text(
-        "void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8"
-    )
+    (tmp_path / "0x111_CFoo_bar.cpp").write_text("void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8")
 
     llm = RecordingLLM()
     target = FunctionTarget(address="0x123456", class_name="CTest", function_name="foo")
@@ -254,9 +252,7 @@ def test_inject_few_shot_true_with_examples_injects_them(tmp_path: Path) -> None
     from re_agent.agents.few_shot_builder import FewShotBuilder
 
     FewShotBuilder.clear_cache()
-    (tmp_path / "0x111_CFoo_bar.cpp").write_text(
-        "void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8"
-    )
+    (tmp_path / "0x111_CFoo_bar.cpp").write_text("void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8")
 
     llm = RecordingLLM()
     target = FunctionTarget(address="0x123456", class_name="CTest", function_name="foo")
@@ -280,9 +276,7 @@ def test_few_shot_max_examples_limits_injected_count(tmp_path: Path) -> None:
 
     FewShotBuilder.clear_cache()
     for i in range(5):
-        (tmp_path / f"0x{i:03x}_CFoo_fn{i}.cpp").write_text(
-            f"void CFoo::fn{i}() {{ call{i}(); }}\n", encoding="utf-8"
-        )
+        (tmp_path / f"0x{i:03x}_CFoo_fn{i}.cpp").write_text(f"void CFoo::fn{i}() {{ call{i}(); }}\n", encoding="utf-8")
 
     llm = RecordingLLM()
     target = FunctionTarget(address="0x123456", class_name="CTest", function_name="foo")
@@ -306,12 +300,11 @@ def test_few_shot_max_examples_limits_injected_count(tmp_path: Path) -> None:
 def test_few_shot_skipped_when_similarity_below_threshold(tmp_path: Path) -> None:
     """Few-shot examples are skipped when the best match score is below min_score."""
     from re_agent.agents.few_shot_builder import FewShotBuilder
+
     FewShotBuilder.clear_cache()
 
     # Create a cpp file that will have low similarity to the query
-    (tmp_path / "0x111_CFoo_bar.cpp").write_text(
-        "void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8"
-    )
+    (tmp_path / "0x111_CFoo_bar.cpp").write_text("void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8")
 
     builder = FewShotBuilder(tmp_path, max_examples=2)
     # Query for a very different function; line count >= 200 → bucket "200+l"
@@ -326,6 +319,7 @@ def test_few_shot_skipped_when_similarity_below_threshold(tmp_path: Path) -> Non
 def test_few_shot_returned_when_above_threshold(tmp_path: Path) -> None:
     """Few-shot examples are returned when score meets min_score."""
     from re_agent.agents.few_shot_builder import FewShotBuilder
+
     FewShotBuilder.clear_cache()
 
     # Create a cpp file with matching characteristics (same small size)

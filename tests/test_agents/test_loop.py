@@ -452,7 +452,10 @@ def test_loop_profile_disables_objective_verifier() -> None:
     )
 
     result = run_fix_loop(
-        target, backend, rev_llm, chk_llm,
+        target,
+        backend,
+        rev_llm,
+        chk_llm,
         max_rounds=4,
         objective_verifier_enabled=True,  # Would normally run, profile overrides
         profile=no_verify_profile,
