@@ -10,7 +10,7 @@ from re_agent.agents.few_shot_builder import pre_classify
 from re_agent.agents.loop import run_fix_loop
 from re_agent.backend.protocol import REBackend
 from re_agent.config.schema import ReAgentConfig
-from re_agent.core.models import FunctionTarget, HookEntry, ReversalResult
+from re_agent.core.models import FunctionTarget, HookEntry, PipelineProfile, ReversalResult, profile_for
 from re_agent.core.session import Session
 from re_agent.llm.protocol import LLMProvider
 from re_agent.orchestrator.block import reverse_blocks
@@ -60,6 +60,8 @@ def reverse_single(
     """
     log_dir = Path(config.output.log_dir) if config.output.log_dir else None
 
+    pipeline_profile: PipelineProfile | None = None
+
     # Try block-level reversal first for large functions
     # Two-tier: fast_mode (all flash, cheap) then hybrid (pro for reasoning) on failure
     if config.orchestrator.block_reversal_enabled:
@@ -68,6 +70,7 @@ def reverse_single(
             decompile = backend.decompile(target.address)
             line_count = decompiled_line_count(decompile.raw_output)
             classification = pre_classify(decompile.raw_output)
+            pipeline_profile = profile_for(classification)
             logger.info(
                 "%s: %d lines, classified as %s",
                 target.address,
@@ -75,7 +78,7 @@ def reverse_single(
                 classification,
             )
             # Skip expensive block decomposition for trivial functions
-            if classification in ("leaf", "getter-setter") and line_count < 100:
+            if pipeline_profile.max_rounds == 1 and line_count < 100:
                 logger.info("%s: trivial %s — skipping block reversal", target.address, classification)
                 block_result = None
             elif line_count >= config.orchestrator.block_threshold_lines:
@@ -123,6 +126,7 @@ def reverse_single(
                     )
                     if not block_result.success:
                         logger.info("%s: flash block FAIL — falling back to standard", target.address)
+                        # Note: profile.max_rounds takes precedence over size-based scaling here.
                         block_result = run_fix_loop(
                             target=target,
                             backend=backend,
@@ -135,6 +139,7 @@ def reverse_single(
                             objective_verifier_enabled=config.orchestrator.objective_verifier_enabled,
                             objective_call_count_tolerance=config.orchestrator.objective_call_count_tolerance,
                             objective_control_flow_tolerance=config.orchestrator.objective_control_flow_tolerance,
+                            profile=pipeline_profile,
                         )
                 else:
                     # Tier 1: all-flash (fast_mode) — cheap, handles ~80%
@@ -195,6 +200,7 @@ def reverse_single(
         objective_control_flow_tolerance=config.orchestrator.objective_control_flow_tolerance,
         optimize=config.orchestrator.optimize,
         enable_phase1=config.orchestrator.enable_phase1,
+        profile=pipeline_profile,
     )
 
     _write_code(result, target, config, output_dir)

@@ -196,12 +196,16 @@ class FewShotBuilder:
     # Querying
     # ------------------------------------------------------------------
 
-    def find_similar(self, decompiled: str, max_examples: int = 0) -> list[str]:
+    def find_similar(self, decompiled: str, max_examples: int = 0, min_score: int = 0) -> list[str]:
         """Find 1–2 similar reverse-engineered examples.
 
         Args:
             decompiled: Ghidra decompiled text to characterize the target.
             max_examples: Override the instance default (0 = use default).
+            min_score: Minimum similarity score to include an example (0 = include all).
+                Scoring: +3 line bucket match, +3 vtable bucket match, +1 globals within 2,
+                +1 calls within 3. Total possible: 8. Useful for filtering irrelevant examples
+                before prompt injection — wire through PipelineProfile when needed.
 
         Returns:
             List of trimmed example snippets ready for prompt injection.
@@ -235,6 +239,8 @@ class FewShotBuilder:
         for _score, entry in scored:
             if len(examples) >= max_ex:
                 break
+            if min_score > 0 and _score < min_score:
+                break  # list is sorted descending, so remaining are also below threshold
             if entry["path"] in seen_paths:
                 continue
             seen_paths.add(entry["path"])

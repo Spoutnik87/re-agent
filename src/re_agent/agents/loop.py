@@ -15,6 +15,7 @@ from re_agent.core.models import (
     CheckerVerdict,
     FunctionTarget,
     ObjectiveVerdict,
+    PipelineProfile,
     ReversalResult,
 )
 from re_agent.core.session import Session
@@ -42,6 +43,7 @@ def run_fix_loop(
     objective_control_flow_tolerance: int = 2,
     optimize: bool = False,
     enable_phase1: bool = True,
+    profile: PipelineProfile | None = None,
 ) -> ReversalResult:
     """Run the reverser->checker->fix loop up to max_rounds.
 
@@ -59,6 +61,14 @@ def run_fix_loop(
     if checker_llm is None:
         checker_llm = reverser_llm
 
+    # Profile overrides explicit params when provided
+    effective_max_rounds = profile.max_rounds if profile is not None else max_rounds
+    effective_phase1 = profile.enable_phase1 if profile is not None else enable_phase1
+    effective_obj_verify = profile.use_objective_verifier if profile is not None else objective_verifier_enabled
+    inject_src_ctx = profile.inject_source_context if profile is not None else True
+    inject_few_shot_flag = profile.inject_few_shot if profile is not None else True
+    few_shot_max = profile.few_shot_max_examples if profile is not None else 2
+
     reverser = ReverserAgent(
         reverser_llm,
         backend,
@@ -68,7 +78,10 @@ def run_fix_loop(
         session=session,
         report_dir=report_dir,
         optimize=optimize,
-        enable_phase1=enable_phase1,
+        enable_phase1=effective_phase1,
+        inject_source_context=inject_src_ctx,
+        inject_few_shot=inject_few_shot_flag,
+        few_shot_max_examples=few_shot_max,
     )
 
     project_desc = project_profile.project_description if project_profile else ""
@@ -79,6 +92,7 @@ def run_fix_loop(
         log_dir.mkdir(parents=True, exist_ok=True)
 
     code = ""
+    last_code = ""
     last_verdict: CheckerVerdict | None = None
     last_objective_verdict: ObjectiveVerdict | None = None
     cached_decompile = None
@@ -87,7 +101,7 @@ def run_fix_loop(
 
     tracker = StagnationTracker()
 
-    for round_num in range(1, max_rounds + 1):
+    for round_num in range(1, effective_max_rounds + 1):
         timestamp = time.strftime("%Y%m%d-%H%M%S")
 
         # Reverse (or fix)
@@ -103,6 +117,26 @@ def run_fix_loop(
                 target=target,
                 objective_findings=last_objective_verdict.findings if last_objective_verdict else None,
             )
+
+        # Short-circuit: identical code means no progress; skip checker and stop
+        if round_num > 1 and code == last_code:
+            logger.info(
+                "%s: code unchanged in round %d, stopping fix loop early",
+                target.address,
+                round_num,
+            )
+            cleanup_loop(reverser, checker)
+            return ReversalResult(
+                target=target,
+                code=code,
+                checker_verdict=last_verdict,
+                objective_verdict=last_objective_verdict,
+                parity_status=None,
+                parity_findings=[],
+                rounds_used=round_num,
+                success=False,
+            )
+        last_code = code
 
         if log_dir:
             log_entry = {
@@ -134,7 +168,7 @@ def run_fix_loop(
         last_verdict = verdict
 
         objective_verdict: ObjectiveVerdict | None = None
-        if objective_verifier_enabled:
+        if effective_obj_verify:
             objective_verdict = verify_candidate(
                 code,
                 target,
@@ -188,7 +222,7 @@ def run_fix_loop(
         objective_verdict=last_objective_verdict,
         parity_status=None,
         parity_findings=[],
-        rounds_used=max_rounds,
+        rounds_used=effective_max_rounds,
         success=False,
     )
 

@@ -196,3 +196,139 @@ def test_optimize_source_context_with_real_source(tmp_path: Path) -> None:
     prompt = reverser.last_prompt
     assert "Class header:" in prompt
     assert "class CTest" in prompt
+
+
+def test_inject_source_context_false_skips_source_context_build(tmp_path: Path) -> None:
+    """When inject_source_context=False, build() is never called even if source_root exists."""
+    (tmp_path / "CTest.h").write_text("class CTest { void foo(); };\n", encoding="utf-8")
+
+    llm = RecordingLLM()
+    target = FunctionTarget(address="0x123456", class_name="CTest", function_name="foo")
+    profile = ProjectProfile(
+        source_root=str(tmp_path),
+        source_extensions=[".cpp", ".h", ".hpp"],
+        hooks_csv=None,
+    )
+
+    reverser = ReverserAgent(
+        llm,
+        EmptySourceBackend(),
+        source_root=tmp_path,
+        project_profile=profile,
+        inject_source_context=False,
+    )
+    reverser.reverse(target)
+
+    prompt = reverser.last_prompt
+    assert "Class header:" not in prompt
+    assert "class CTest" not in prompt
+
+
+def test_inject_few_shot_false_skips_few_shot_injection(tmp_path: Path) -> None:
+    """When inject_few_shot=False, few-shot examples are not injected even if index has matches."""
+    from re_agent.agents.few_shot_builder import FewShotBuilder
+
+    FewShotBuilder.clear_cache()
+    (tmp_path / "0x111_CFoo_bar.cpp").write_text("void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8")
+
+    llm = RecordingLLM()
+    target = FunctionTarget(address="0x123456", class_name="CTest", function_name="foo")
+
+    reverser = ReverserAgent(
+        llm,
+        EmptySourceBackend(),
+        source_root=tmp_path,
+        inject_few_shot=False,
+    )
+    reverser.reverse(target)
+
+    prompt = reverser.last_prompt
+    assert "Reference examples" not in prompt
+    FewShotBuilder.clear_cache()
+
+
+def test_inject_few_shot_true_with_examples_injects_them(tmp_path: Path) -> None:
+    """When inject_few_shot=True (default), found examples are injected."""
+    from re_agent.agents.few_shot_builder import FewShotBuilder
+
+    FewShotBuilder.clear_cache()
+    (tmp_path / "0x111_CFoo_bar.cpp").write_text("void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8")
+
+    llm = RecordingLLM()
+    target = FunctionTarget(address="0x123456", class_name="CTest", function_name="foo")
+
+    reverser = ReverserAgent(
+        llm,
+        EmptySourceBackend(),
+        source_root=tmp_path,
+        inject_few_shot=True,
+    )
+    reverser.reverse(target)
+
+    prompt = reverser.last_prompt
+    assert "Reference examples" in prompt
+    FewShotBuilder.clear_cache()
+
+
+def test_few_shot_max_examples_limits_injected_count(tmp_path: Path) -> None:
+    """few_shot_max_examples=1 injects at most one example."""
+    from re_agent.agents.few_shot_builder import FewShotBuilder
+
+    FewShotBuilder.clear_cache()
+    for i in range(5):
+        (tmp_path / f"0x{i:03x}_CFoo_fn{i}.cpp").write_text(f"void CFoo::fn{i}() {{ call{i}(); }}\n", encoding="utf-8")
+
+    llm = RecordingLLM()
+    target = FunctionTarget(address="0x123456", class_name="CTest", function_name="foo")
+
+    reverser = ReverserAgent(
+        llm,
+        EmptySourceBackend(),
+        source_root=tmp_path,
+        inject_few_shot=True,
+        few_shot_max_examples=1,
+    )
+    reverser.reverse(target)
+
+    prompt = reverser.last_prompt
+    # With max_examples=1, only one "// Example from" header should appear
+    assert prompt.count("// Example from") >= 1  # at least one injected
+    assert prompt.count("// Example from") <= 1  # at most one (max_examples=1)
+    FewShotBuilder.clear_cache()
+
+
+def test_few_shot_skipped_when_similarity_below_threshold(tmp_path: Path) -> None:
+    """Few-shot examples are skipped when the best match score is below min_score."""
+    from re_agent.agents.few_shot_builder import FewShotBuilder
+
+    FewShotBuilder.clear_cache()
+
+    # Create a cpp file that will have low similarity to the query
+    (tmp_path / "0x111_CFoo_bar.cpp").write_text("void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8")
+
+    builder = FewShotBuilder(tmp_path, max_examples=2)
+    # Query for a very different function; line count >= 200 → bucket "200+l"
+    # but the example has ~1 line → bucket "<25l" → no line_bucket match (0 points)
+    # vtable match (+3), globals within 2 (+1), calls within 3 (+1) = score 5
+    long_decompile = "void Fn() {\n" + "  int x = 0;\n" * 200 + "}\n"
+    results = builder.find_similar(long_decompile, min_score=6)
+
+    assert results == []
+
+
+def test_few_shot_returned_when_above_threshold(tmp_path: Path) -> None:
+    """Few-shot examples are returned when score meets min_score."""
+    from re_agent.agents.few_shot_builder import FewShotBuilder
+
+    FewShotBuilder.clear_cache()
+
+    # Create a cpp file with matching characteristics (same small size)
+    content = "void CFoo::bar() {\n" + "  call_something();\n" * 3 + "}\n"
+    (tmp_path / "0x111_CFoo_bar.cpp").write_text(content, encoding="utf-8")
+
+    builder = FewShotBuilder(tmp_path, max_examples=2)
+    # Same small function → line_bucket match (+3), vtable match (+3) = score 6
+    results = builder.find_similar(content, min_score=3)
+
+    assert len(results) == 1
+    assert "CFoo" in results[0] or "bar" in results[0]

@@ -94,6 +94,15 @@ class BlockReverserAgent:
             parts = [f"// BLOCK {bid}:\n{code}" for bid, code in recent]
             reversed_text = "\n\n".join(parts)
 
+        # Include full_decompiled only in the first block call (when no prior blocks exist).
+        # Subsequent blocks use the conversation history which already contains the full context.
+        is_first_block = not reversed_blocks
+        effective_full_decompiled = (
+            full_decompiled or "(same as block — this is the first/only block)"
+            if is_first_block
+            else "(see conversation context from first block)"
+        )
+
         task_prompt = render_template(
             PROMPTS_DIR / "block_reverser_task.md",
             class_name=class_name,
@@ -103,7 +112,7 @@ class BlockReverserAgent:
             block_label=block.label,
             block_decompiled=block.decompiled_text,
             block_comment=block.comment,
-            full_decompiled=full_decompiled or "(same as block — this is the first/only block)",
+            full_decompiled=effective_full_decompiled,
             var_mapping=var_mapping or "(infer from decompile — no pre-computed mapping)",
             reversed_blocks=reversed_text or "(none yet)",
         )
@@ -111,7 +120,7 @@ class BlockReverserAgent:
         # Cache key: hash of block content + context (excludes previously reversed blocks
         # since they change between fix rounds but shouldn't affect the block output)
         cache_key = hashlib.md5(
-            f"{self._system_prompt}|{block.id}|{class_name}|{function_name}|{block.decompiled_text}|{full_decompiled}|{var_mapping}".encode()
+            f"{self._system_prompt}|{block.id}|{class_name}|{function_name}|{block.decompiled_text}|{effective_full_decompiled}|{var_mapping}".encode()
         ).hexdigest()
         if cache_key in _response_cache:
             return self._extract_block_code(_response_cache[cache_key], block.id)
