@@ -1,4 +1,5 @@
 """Source code indexer for C++ function body extraction and analysis."""
+
 from __future__ import annotations
 
 import contextlib
@@ -41,13 +42,9 @@ class SourceIndexer:
         self._class_macro_re: re.Pattern[str] | None = None
         if profile and profile.class_macro:
             with contextlib.suppress(re.error):
-                self._class_macro_re = re.compile(
-                    rf"{re.escape(profile.class_macro)}\s*\(\s*(\w+)\s*\)"
-                )
+                self._class_macro_re = re.compile(rf"{re.escape(profile.class_macro)}\s*\(\s*(\w+)\s*\)")
 
-        self.source_files: list[Path] = sorted(
-            p for ext in extensions for p in source_root.rglob(f"*{ext}")
-        )
+        self.source_files: list[Path] = sorted(p for ext in extensions for p in source_root.rglob(f"*{ext}"))
         self.file_text_cache: dict[Path, str] = {}
         self.token_index: dict[tuple[str, str], list[tuple[Path, int]]] = defaultdict(list)
         # Maps address -> (class_name, fn_name) discovered via hook patterns
@@ -132,6 +129,22 @@ class SourceIndexer:
                 str_quote = ch
                 i += 1
                 continue
+            # C++11 raw string literal: R"(...)" or R"delim(...)delim"
+            if ch == "R" and nxt == '"':
+                i += 2
+                delim = ""
+                while i < n and text[i] != "(":
+                    delim += text[i]
+                    i += 1
+                if i < n:
+                    i += 1  # skip (
+                closing = ")" + delim + '"'
+                while i < n:
+                    if text[i : i + len(closing)] == closing:
+                        i += len(closing)
+                        break
+                    i += 1
+                continue
             if ch == "{":
                 depth += 1
             elif ch == "}":
@@ -188,6 +201,22 @@ class SourceIndexer:
                 str_quote = ch
                 i += 1
                 continue
+            # C++11 raw string literal: R"(...)" or R"delim(...)delim"
+            if ch == "R" and nxt == '"':
+                i += 2
+                delim = ""
+                while i < n and text[i] != "(":
+                    delim += text[i]
+                    i += 1
+                if i < n:
+                    i += 1  # skip (
+                closing = ")" + delim + '"'
+                while i < n:
+                    if text[i : i + len(closing)] == closing:
+                        i += len(closing)
+                        break
+                    i += 1
+                continue
             if ch == "(":
                 depth += 1
             elif ch == ")":
@@ -206,7 +235,7 @@ class SourceIndexer:
         if not inner:
             return False
         if inner.startswith("return "):
-            inner = inner[len("return "):].strip()
+            inner = inner[len("return ") :].strip()
         if not inner.endswith(";"):
             return False
         inner = inner[:-1].strip()
@@ -228,20 +257,17 @@ class SourceIndexer:
             return False
         callee_base = callee
         if callee_base.startswith("this->"):
-            callee_base = callee_base[len("this->"):]
+            callee_base = callee_base[len("this->") :]
         if "::" in callee_base:
             callee_base = callee_base.split("::")[-1]
         if "<" in callee_base:
             callee_base = callee_base.split("<", 1)[0]
         return callee_base.startswith("I_") or (
-            "<" in callee
-            and len(callee_base) > 1
-            and callee_base.startswith("I")
-            and callee_base[1].isupper()
+            "<" in callee and len(callee_base) > 1 and callee_base.startswith("I") and callee_base[1].isupper()
         )
 
     def _make_source_match(self, path: Path, txt: str, idx: int, open_brace: int, close_brace: int) -> SourceMatch:
-        body = txt[open_brace:close_brace + 1]
+        body = txt[open_brace : close_brace + 1]
         body_nc = strip_comments(body)
         body_lines = body.count("\n") + 1
         total, plugin, non_plugin = count_calls(body_nc, self.stub_call_prefix)

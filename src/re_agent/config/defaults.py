@@ -1,4 +1,5 @@
 """Default configuration templates for re-agent."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -23,6 +24,9 @@ project_profile:
     - ".h"
     - ".hpp"
   hooks_csv: "docs/hooks.csv"
+  # project_description: "PROJECT: My Project (year, context) — description. Architecture details."
+  # project_context: "PROJECT CONTEXT — You are decompiling Project X..."
+  # checker_custom_rules: "Additional custom verification rules..."
 
 llm:
   provider: "claude"
@@ -47,6 +51,8 @@ parity:
   cache_dir: ".cache/re-agent-parity"
 
 orchestrator:
+  optimize: true
+  enable_phase1: true
   max_review_rounds: 4
   max_functions_per_class: 10
   objective_verifier_enabled: true

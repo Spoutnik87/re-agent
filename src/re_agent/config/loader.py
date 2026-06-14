@@ -1,4 +1,5 @@
 """Configuration loader for re-agent."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -35,8 +36,7 @@ def _load_yaml_file(path: Path) -> dict[str, Any]:
         import yaml  # type: ignore[import-untyped]
     except ImportError as err:
         raise ImportError(
-            "PyYAML is required for loading YAML config files. "
-            "Install it with: pip install pyyaml"
+            "PyYAML is required for loading YAML config files. Install it with: pip install pyyaml"
         ) from err
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
@@ -53,6 +53,7 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         ("RE_AGENT_LLM_PROVIDER", ["llm", "provider"], str),
         ("RE_AGENT_LLM_API_KEY", ["llm", "api_key"], str),
         ("RE_AGENT_LLM_MODEL", ["llm", "model"], str),
+        ("RE_AGENT_LLM_BLOCK_MODEL", ["llm", "block_model"], str),
         ("RE_AGENT_LLM_BASE_URL", ["llm", "base_url"], str),
         ("RE_AGENT_BACKEND_CLI_PATH", ["backend", "cli_path"], str),
         ("RE_AGENT_BACKEND_TIMEOUT", ["backend", "timeout_s"], int),
@@ -69,7 +70,10 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
             if part not in d or not isinstance(d[part], dict):
                 d[part] = {}
             d = d[part]
-        d[key_path[-1]] = cast_type(value)
+        try:
+            d[key_path[-1]] = cast_type(value)
+        except (ValueError, TypeError) as exc:
+            _log.warning("Invalid value for %s: %r — %s, ignoring", env_var, value, exc)
 
     return raw
 
@@ -97,7 +101,7 @@ def _coerce_field(value: Any, field_type_str: str) -> Any:
             return int(value)
         except (ValueError, TypeError):
             return value
-    if "float" in field_type_str and not isinstance(value, (int, float)):
+    if "float" in field_type_str and not isinstance(value, int | float):
         try:
             return float(value)
         except (ValueError, TypeError):
@@ -127,7 +131,9 @@ def _build_with_coercion(cls: type[_T], data: dict[str, Any]) -> _T:
         else:
             _log.warning(
                 "Unknown config key '%s' in %s (known: %s) — ignored",
-                k, cls.__name__, ", ".join(sorted(known)),
+                k,
+                cls.__name__,
+                ", ".join(sorted(known)),
             )
     return cls(**filtered)
 

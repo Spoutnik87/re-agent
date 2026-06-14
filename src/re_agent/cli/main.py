@@ -1,4 +1,5 @@
 """CLI entry point for re-agent."""
+
 from __future__ import annotations
 
 import argparse
@@ -26,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     rev_p.add_argument("--max-rounds", type=int, default=None, help="Max review rounds per function")
     rev_p.add_argument("--dry-run", action="store_true", help="Show plan without executing")
     rev_p.add_argument("--skip-parity", action="store_true", help="Skip parity check after PASS")
+    rev_p.add_argument("--no-optimize", action="store_true", help="Disable token optimization (use original behavior)")
 
     # parity
     par_p = sub.add_parser("parity", help="Run parity checks on hooked functions")
@@ -54,18 +56,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "init":
         from re_agent.cli.cmd_init import cmd_init
+
         return cmd_init(args)
 
     if args.command == "reverse":
         from re_agent.cli.cmd_reverse import cmd_reverse
+
         return cmd_reverse(args)
 
     if args.command == "parity":
         from re_agent.cli.cmd_parity import cmd_parity
+
         return cmd_parity(args)
 
     if args.command == "status":
         from re_agent.cli.cmd_status import cmd_status
+
         return cmd_status(args)
 
     parser.print_help()

@@ -1,13 +1,21 @@
 """Codex CLI-backed LLM provider using ChatGPT login credentials."""
+
 from __future__ import annotations
 
+import logging
 import subprocess
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 from re_agent.llm.protocol import Message
+
+_logger = logging.getLogger(__name__)
+_RETRY_COUNT = 2
+_RETRY_BASE_DELAY = 2.0
+_RETRY_MAX_DELAY = 8.0
 
 
 class CodexCLIProvider:
@@ -27,6 +35,20 @@ class CodexCLIProvider:
     def send(self, messages: list[Message], **kwargs: Any) -> str:
         prompt = self._render_messages(messages)
         model = kwargs.get("model", self._model)
+
+        delay = _RETRY_BASE_DELAY
+        for attempt in range(_RETRY_COUNT):
+            try:
+                return self._run_codex(prompt, model)
+            except Exception:
+                if attempt == _RETRY_COUNT - 1:
+                    raise
+                _logger.warning("Codex exec attempt %d failed, retrying in %.1fs", attempt + 1, delay)
+                time.sleep(delay)
+                delay = min(delay * 2, _RETRY_MAX_DELAY)
+        raise RuntimeError("unreachable")
+
+    def _run_codex(self, prompt: str, model: str) -> str:
         with tempfile.NamedTemporaryFile("r+", encoding="utf-8", delete=False) as tmp:
             out_path = Path(tmp.name)
 
@@ -53,9 +75,7 @@ class CodexCLIProvider:
                 check=False,
             )
             if proc.returncode != 0:
-                raise RuntimeError(
-                    f"codex exec failed with exit code {proc.returncode}\n{proc.stdout}"
-                )
+                raise RuntimeError(f"codex exec failed with exit code {proc.returncode}\n{proc.stdout}")
             return out_path.read_text(encoding="utf-8")
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"codex exec timed out after {self._timeout_s}s") from exc
@@ -82,6 +102,10 @@ class CodexCLIProvider:
         response_text = self.send(list(history))
         history.append(Message(role="assistant", content=response_text))
         return response_text
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        """Delete a conversation, freeing its history."""
+        self._conversations.pop(conversation_id, None)
 
     @staticmethod
     def _render_messages(messages: list[Message]) -> str:

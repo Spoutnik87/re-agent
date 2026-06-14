@@ -1,4 +1,5 @@
 """Tests for individual parity signals."""
+
 from __future__ import annotations
 
 from re_agent.core.models import GhidraData, SourceMatch
@@ -16,9 +17,17 @@ from re_agent.parity.signals import (
 
 def _make_source(**kwargs: object) -> SourceMatch:
     defaults = dict(
-        path="test.cpp", line=1, body="{ code; }", body_no_comments="{ code; }",
-        body_lines=10, call_count=5, plugin_call_count=0, non_plugin_call_count=5,
-        control_flow_count=3, has_stub_marker=False, has_fp_token=False,
+        path="test.cpp",
+        line=1,
+        body="{ code; }",
+        body_no_comments="{ code; }",
+        body_lines=10,
+        call_count=5,
+        plugin_call_count=0,
+        non_plugin_call_count=5,
+        control_flow_count=3,
+        has_stub_marker=False,
+        has_fp_token=False,
         is_inline_internal_forwarder=False,
     )
     defaults.update(kwargs)
@@ -27,9 +36,12 @@ def _make_source(**kwargs: object) -> SourceMatch:
 
 def _make_ghidra(**kwargs: object) -> GhidraData:
     defaults = dict(
-        decompile_ok=True, asm_ok=True,
-        asm_instruction_count=50, asm_call_count=5,
-        asm_has_fp_sensitive=False, callees=5,
+        decompile_ok=True,
+        asm_ok=True,
+        asm_instruction_count=50,
+        asm_call_count=5,
+        asm_has_fp_sensitive=False,
+        callees=5,
     )
     defaults.update(kwargs)
     return GhidraData(**defaults)  # type: ignore[arg-type]

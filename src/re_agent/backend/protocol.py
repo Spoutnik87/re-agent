@@ -1,4 +1,5 @@
 """Reverse-engineering backend protocol definition."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

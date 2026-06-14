@@ -1,4 +1,5 @@
 """Simple string-template rendering utilities."""
+
 from __future__ import annotations
 
 import string

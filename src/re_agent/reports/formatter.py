@@ -1,4 +1,5 @@
 """Output formatters for re-agent results."""
+
 from __future__ import annotations
 
 import json

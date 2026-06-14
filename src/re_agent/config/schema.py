@@ -1,4 +1,5 @@
 """Configuration schema dataclasses for re-agent."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -8,31 +9,51 @@ from dataclasses import dataclass, field
 class ProjectProfile:
     """Project-specific patterns and paths."""
 
-    hook_patterns: list[str] = field(default_factory=lambda: [
-        r"RH_ScopedInstall\s*\(\s*(\w+)\s*,\s*(0x[0-9A-Fa-f]+)",
-        r"RH_ScopedVirtualInstall\s*\(\s*(\w+)\s*,\s*(0x[0-9A-Fa-f]+)",
-    ])
-    stub_patterns: list[str] = field(default_factory=lambda: [
-        r"plugin::Call",
-    ])
-    stub_markers: list[str] = field(default_factory=lambda: [
-        "NOTSA_UNREACHABLE",
-    ])
+    hook_patterns: list[str] = field(
+        default_factory=lambda: [
+            r"RH_ScopedInstall\s*\(\s*(\w+)\s*,\s*(0x[0-9A-Fa-f]+)",
+            r"RH_ScopedVirtualInstall\s*\(\s*(\w+)\s*,\s*(0x[0-9A-Fa-f]+)",
+        ]
+    )
+    stub_patterns: list[str] = field(
+        default_factory=lambda: [
+            r"plugin::Call",
+        ]
+    )
+    stub_markers: list[str] = field(
+        default_factory=lambda: [
+            "NOTSA_UNREACHABLE",
+        ]
+    )
     stub_call_prefix: str = "plugin::Call"
     class_macro: str = "RH_ScopedClass"
     source_root: str = "source/game_sa"
-    source_extensions: list[str] = field(default_factory=lambda: [
-        ".cpp", ".h", ".hpp",
-    ])
+    source_extensions: list[str] = field(
+        default_factory=lambda: [
+            ".cpp",
+            ".h",
+            ".hpp",
+        ]
+    )
     hooks_csv: str | None = "docs/hooks.csv"
+    project_description: str = ""
+    project_context: str = ""
+    checker_custom_rules: str = ""
 
 
 @dataclass
 class LLMConfig:
-    """LLM provider configuration."""
+    """LLM provider configuration.
+
+    ``model`` is used for reasoning-heavy tasks (checker, skeleton, decomposition).
+    ``block_model``, when set, overrides ``model`` for block-level reversals
+    (many small calls where a cheaper/faster model suffices).
+    When ``None``, ``model`` is used for everything.
+    """
 
     provider: str = "claude"
     model: str = "claude-sonnet-4-5-20250929"
+    block_model: str | None = None
     api_key: str | None = None
     base_url: str | None = None
     max_tokens: int = 4096
@@ -65,11 +86,16 @@ class ParityConfig:
 class OrchestratorConfig:
     """Orchestrator loop settings."""
 
+    optimize: bool = True
+    enable_phase1: bool = True
     max_review_rounds: int = 4
     max_functions_per_class: int = 10
     objective_verifier_enabled: bool = True
     objective_call_count_tolerance: int = 3
     objective_control_flow_tolerance: int = 2
+    block_reversal_enabled: bool = True
+    block_threshold_lines: int = 100
+    block_max_lines: int = 40
 
 
 @dataclass

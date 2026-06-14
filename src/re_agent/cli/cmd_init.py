@@ -1,4 +1,5 @@
 """re-agent init command — generates config file."""
+
 from __future__ import annotations
 
 import argparse

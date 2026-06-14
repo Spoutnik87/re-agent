@@ -1,4 +1,5 @@
 """re-agent parity command — run parity checks."""
+
 from __future__ import annotations
 
 import argparse
@@ -38,14 +39,16 @@ def cmd_parity(args: argparse.Namespace) -> int:
         # Create entries for any addresses not found in the CSV
         matched_addrs = {normalize_address(h.address) for h in matched}
         for addr in wanted - matched_addrs:
-            matched.append(HookEntry(
-                class_path="",
-                fn_name="",
-                address=addr,
-                reversed=True,
-                locked=False,
-                is_virtual=False,
-            ))
+            matched.append(
+                HookEntry(
+                    class_path="",
+                    fn_name="",
+                    address=addr,
+                    reversed=True,
+                    locked=False,
+                    is_virtual=False,
+                )
+            )
         hooks = matched
     elif not hooks:
         print("No hooks loaded. Provide --address or configure hooks_csv in project_profile.", file=sys.stderr)
@@ -58,7 +61,7 @@ def cmd_parity(args: argparse.Namespace) -> int:
 
     # Limit
     if args.limit:
-        hooks = hooks[:args.limit]
+        hooks = hooks[: args.limit]
 
     if not hooks:
         print("No hooks selected.")
@@ -68,6 +71,7 @@ def cmd_parity(args: argparse.Namespace) -> int:
     if not args.skip_ghidra:
         try:
             from re_agent.backend.registry import create_backend
+
             backend = create_backend(config.backend)
         except Exception as exc:
             print(f"Warning: could not initialize backend ({exc}), running source-only checks", file=sys.stderr)
@@ -95,12 +99,14 @@ def cmd_parity(args: argparse.Namespace) -> int:
         for r in results:
             hook = r["hook"]
             status = r["status"]
-            serializable.append({
-                "symbol": hook.symbol,
-                "address": hook.address,
-                "status": status.value if isinstance(status, ParityStatus) else str(status),
-                "findings": [{"level": f.level, "reason": f.reason} for f in r.get("findings", [])],
-            })
+            serializable.append(
+                {
+                    "symbol": hook.symbol,
+                    "address": hook.address,
+                    "status": status.value if isinstance(status, ParityStatus) else str(status),
+                    "findings": [{"level": f.level, "reason": f.reason} for f in r.get("findings", [])],
+                }
+            )
         output_path.write_text(json.dumps({"results": serializable}, indent=2), encoding="utf-8")
         print(f"Report written to {output_path}")
 

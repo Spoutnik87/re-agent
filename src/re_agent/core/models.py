@@ -1,4 +1,5 @@
 """Core data models for re-agent."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -7,6 +8,7 @@ from enum import Enum
 # ---------------------------------------------------------------------------
 # Target identification
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class FunctionTarget:
@@ -21,6 +23,7 @@ class FunctionTarget:
 # ---------------------------------------------------------------------------
 # Verdict / status enums
 # ---------------------------------------------------------------------------
+
 
 class Verdict(Enum):
     """Checker verdict for a reversal attempt."""
@@ -41,6 +44,7 @@ class ParityStatus(Enum):
 # ---------------------------------------------------------------------------
 # Checker results
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class Finding:
@@ -86,6 +90,7 @@ class ReversalResult:
 # ---------------------------------------------------------------------------
 # Ghidra / decompiler data
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class DecompileResult:
@@ -169,6 +174,7 @@ class AsmResult:
 # Source analysis data
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SourceMatch:
     """Parsed source function body with analysis metrics."""
@@ -212,6 +218,7 @@ class GhidraData:
 # Hook registry
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class HookEntry:
     """A single hook from the hooks CSV registry."""
@@ -238,6 +245,7 @@ class HookEntry:
 # Semantic parity rules
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SemanticRule:
     """A semantic parity rule loaded from a JSON rules file."""
@@ -258,3 +266,87 @@ class ManualCheckEntry:
 
     line: int
     note: str
+
+
+# ---------------------------------------------------------------------------
+# Pipeline profile — maps classification to pipeline execution flags
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PipelineProfile:
+    """Execution profile derived from function classification.
+
+    Controls which pipeline steps run for a given function type,
+    allowing trivial functions to skip expensive steps.
+
+    few_shot_max_examples: Max examples to inject from FewShotBuilder (0 = disable few-shot).
+    """
+
+    max_rounds: int
+    enable_phase1: bool
+    inject_source_context: bool
+    inject_few_shot: bool
+    use_objective_verifier: bool
+    few_shot_max_examples: int = 0  # 0 = disable; non-zero = pass to find_similar()
+
+
+_PROFILES: dict[str, PipelineProfile] = {
+    "leaf": PipelineProfile(
+        max_rounds=1,
+        enable_phase1=False,
+        inject_source_context=False,
+        inject_few_shot=False,
+        use_objective_verifier=False,
+        few_shot_max_examples=0,
+    ),
+    "getter-setter": PipelineProfile(
+        max_rounds=1,
+        enable_phase1=False,
+        inject_source_context=False,
+        inject_few_shot=False,
+        use_objective_verifier=False,
+        few_shot_max_examples=0,
+    ),
+    "win32-api": PipelineProfile(
+        max_rounds=2,
+        enable_phase1=True,
+        inject_source_context=False,
+        inject_few_shot=True,
+        use_objective_verifier=True,
+        few_shot_max_examples=2,
+    ),
+    "vtable-heavy": PipelineProfile(
+        max_rounds=5,
+        enable_phase1=True,
+        inject_source_context=True,
+        inject_few_shot=True,
+        use_objective_verifier=True,
+        few_shot_max_examples=3,
+    ),
+    # max_rounds=2: complex functions need a fix cycle, but fewer rounds than "general"
+    # to cap token cost on deeply nested logic that often stagnates after 2 rounds anyway.
+    "complex-state-machine": PipelineProfile(
+        max_rounds=2,
+        enable_phase1=True,
+        inject_source_context=True,
+        inject_few_shot=True,
+        use_objective_verifier=True,
+        few_shot_max_examples=2,
+    ),
+    "general": PipelineProfile(
+        max_rounds=4,
+        enable_phase1=True,
+        inject_source_context=True,
+        inject_few_shot=True,
+        use_objective_verifier=True,
+        few_shot_max_examples=2,
+    ),
+}
+
+_GENERAL_PROFILE = _PROFILES["general"]
+
+
+def profile_for(classification: str) -> PipelineProfile:
+    """Return the PipelineProfile for a given pre_classify() result."""
+    return _PROFILES.get(classification, _GENERAL_PROFILE)

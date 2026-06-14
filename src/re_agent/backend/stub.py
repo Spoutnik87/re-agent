@@ -1,4 +1,5 @@
 """Stub backend for testing without a real Ghidra instance."""
+
 from __future__ import annotations
 
 from re_agent.backend.protocol import BackendCapabilities

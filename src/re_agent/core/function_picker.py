@@ -1,4 +1,5 @@
 """Ranks and selects the next function to reverse in a class."""
+
 from __future__ import annotations
 
 from re_agent.backend.protocol import REBackend
@@ -27,10 +28,7 @@ def pick_next(
         except Exception:
             return None
 
-    candidates = [
-        f for f in remaining
-        if not session.is_attempted(f.address)
-    ]
+    candidates = [f for f in remaining if not session.is_attempted(f.address)]
 
     if not candidates:
         return None

@@ -1,4 +1,5 @@
 """Aggregate parity findings into a single GREEN/YELLOW/RED status."""
+
 from __future__ import annotations
 
 from re_agent.core.models import Finding, ParityStatus

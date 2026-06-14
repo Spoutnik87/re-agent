@@ -1,4 +1,5 @@
 """Tests for the parity engine address-fallback logic."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,7 +29,7 @@ def test_address_only_hook_resolves_via_hook_index(tmp_path: Path) -> None:
     """An address-only hook (empty class/fn) should resolve its source
     function body via the hook_address_index built from hook patterns."""
     src = tmp_path / "CTrain.cpp"
-    src.write_text('''\
+    src.write_text("""\
 RH_ScopedClass(CTrain);
 RH_ScopedInstall(ProcessControl, 0x6F86A0);
 
@@ -39,7 +40,7 @@ void CTrain::ProcessControl() {
         EvenMore();
     }
 }
-''')
+""")
     config = _make_config(str(tmp_path))
 
     # Simulate an address-only hook with no class/fn metadata

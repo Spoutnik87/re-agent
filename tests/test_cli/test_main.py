@@ -1,4 +1,5 @@
 """Smoke tests for CLI."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,6 +18,7 @@ def test_no_command_returns_zero() -> None:
 
 def test_version_flag() -> None:
     import pytest
+
     with pytest.raises(SystemExit) as exc_info:
         main(["--version"])
     assert exc_info.value.code == 0
@@ -38,13 +40,13 @@ def test_init_fails_if_exists(tmp_path: Path) -> None:
 
 def test_status_no_session(tmp_path: Path) -> None:
     config_path = tmp_path / "re-agent.yaml"
-    # Create a minimal config with session file in tmp
-    config_path.write_text(f'''
+    tp = tmp_path.as_posix()
+    config_path.write_text(f"""
 output:
-  session_file: "{tmp_path}/progress.json"
-  report_dir: "{tmp_path}/reports"
-  log_dir: "{tmp_path}/logs"
-''')
+  session_file: "{tp}/progress.json"
+  report_dir: "{tp}/reports"
+  log_dir: "{tp}/logs"
+""")
     result = main(["--config", str(config_path), "status"])
     assert result == 0
 

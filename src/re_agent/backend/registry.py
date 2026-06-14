@@ -1,4 +1,5 @@
 """Backend factory — creates a backend from configuration."""
+
 from __future__ import annotations
 
 from re_agent.backend.protocol import REBackend
@@ -30,7 +31,4 @@ def create_backend(config: BackendConfig) -> REBackend:
 
         return StubBackend()
 
-    raise ValueError(
-        f"Unknown backend type: {config.type!r}. "
-        f"Supported: ghidra-bridge, stub"
-    )
+    raise ValueError(f"Unknown backend type: {config.type!r}. Supported: ghidra-bridge, stub")

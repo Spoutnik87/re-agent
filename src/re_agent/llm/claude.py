@@ -1,12 +1,20 @@
 """Claude (Anthropic) LLM provider implementation."""
+
 from __future__ import annotations
 
+import logging
+import time
 import uuid
 from typing import Any
 
 import anthropic
 
 from re_agent.llm.protocol import Message
+
+_logger = logging.getLogger(__name__)
+_RETRY_COUNT = 3
+_RETRY_BASE_DELAY = 1.0
+_RETRY_MAX_DELAY = 10.0
 
 
 class ClaudeProvider:
@@ -34,6 +42,9 @@ class ClaudeProvider:
         self._max_tokens = max_tokens
         self._temperature = temperature
         self._conversations: dict[str, list[Message]] = {}
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
+        self.total_calls: int = 0
 
     # -- LLMProvider interface ------------------------------------------------
 
@@ -57,14 +68,32 @@ class ClaudeProvider:
         if system_text is not None:
             create_kwargs["system"] = system_text
 
-        response = self._client.messages.create(**create_kwargs)
+        response = self._call_with_retry(self._client.messages.create, create_kwargs)
 
-        # Extract text from content blocks.
+        if hasattr(response, "usage") and response.usage:
+            self.total_prompt_tokens += response.usage.input_tokens or 0
+            self.total_completion_tokens += response.usage.output_tokens or 0
+        self.total_calls += 1
+
         parts: list[str] = []
         for block in response.content:
             if hasattr(block, "text"):
                 parts.append(block.text)
         return "\n".join(parts)
+
+    @staticmethod
+    def _call_with_retry(fn: Any, kwargs: dict[str, Any]) -> Any:
+        delay = _RETRY_BASE_DELAY
+        for attempt in range(_RETRY_COUNT):
+            try:
+                return fn(**kwargs)
+            except Exception:
+                if attempt == _RETRY_COUNT - 1:
+                    raise
+                _logger.warning("Claude API call attempt %d failed, retrying in %.1fs", attempt + 1, delay)
+                time.sleep(delay)
+                delay = min(delay * 2, _RETRY_MAX_DELAY)
+        raise RuntimeError("unreachable")
 
     @property
     def supports_conversations(self) -> bool:
@@ -87,3 +116,7 @@ class ClaudeProvider:
         response_text = self.send(list(history))
         history.append(Message(role="assistant", content=response_text))
         return response_text
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        """Delete a conversation, freeing its history."""
+        self._conversations.pop(conversation_id, None)
