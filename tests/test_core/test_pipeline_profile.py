@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from re_agent.core.models import PipelineProfile, profile_for
+from re_agent.core.models import profile_for
 
 
 def test_leaf_profile_skips_all_extras() -> None:
