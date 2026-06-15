@@ -3,8 +3,8 @@
 import json
 from typing import Any
 
-import networkx as nx
-from networkx.algorithms.community import louvain_communities
+import networkx as nx  # type: ignore[import-untyped]
+from networkx.algorithms.community import louvain_communities  # type: ignore[import-untyped]
 
 
 def _build_graph(graph_dict: dict[str, set[str]]) -> nx.Graph:

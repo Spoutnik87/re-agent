@@ -44,7 +44,7 @@ def reverse_class(
     if session is None:
         session = Session(config.output.session_file)
 
-    limit = max_functions or config.orchestrator.max_functions_per_class
+    limit = max_functions if max_functions is not None else config.orchestrator.max_functions_per_class
     results: list[ReversalResult] = []
 
     # Build the source indexer once for the entire class run.

@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+_log = logging.getLogger(__name__)
+
 
 class PipelineState:
     """Manages the master pipeline state file (pipeline-state.json)."""
+
+    _VALID_STATUSES = frozenset({"pending", "in_progress", "completed", "failed"})
 
     def __init__(self, path: str | Path = "pipeline-state.json") -> None:
         self.path = Path(path)
@@ -19,8 +24,10 @@ class PipelineState:
         if self.path.exists():
             try:
                 return json.loads(self.path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
-            except (json.JSONDecodeError, OSError):
-                pass
+            except json.JSONDecodeError:
+                _log.warning("Pipeline state file %s is corrupted; using default state.", self.path)
+            except OSError:
+                _log.warning("Cannot read pipeline state file %s; using default state.", self.path)
         return {
             "pipeline_version": "1.0",
             "phases": {
@@ -41,7 +48,11 @@ class PipelineState:
         return self._data["phases"].get("build", {}).get("status", "pending")  # type: ignore[no-any-return]
 
     def update_reverse(self, status: str, **kwargs: Any) -> None:
+        if status not in self._VALID_STATUSES:
+            raise ValueError(f"Invalid status: {status!r}. Must be one of {sorted(self._VALID_STATUSES)}")
+        existing = self._data["phases"].get("reverse", {})
         self._data["phases"]["reverse"] = {
+            **existing,
             "status": status,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             **kwargs,
@@ -49,7 +60,11 @@ class PipelineState:
         self._save()
 
     def update_build(self, status: str, **kwargs: Any) -> None:
+        if status not in self._VALID_STATUSES:
+            raise ValueError(f"Invalid status: {status!r}. Must be one of {sorted(self._VALID_STATUSES)}")
+        existing = self._data["phases"].get("build", {})
         self._data["phases"]["build"] = {
+            **existing,
             "status": status,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             **kwargs,

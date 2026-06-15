@@ -26,11 +26,16 @@ class BackendConfig:
 
 @dataclass
 class ProjectProfile:
-    hook_patterns: list[str] = field(default_factory=list)
-    stub_patterns: list[str] = field(default_factory=list)
-    stub_markers: list[str] = field(default_factory=list)
-    stub_call_prefix: str = ""
-    class_macro: str = ""
+    hook_patterns: list[str] = field(
+        default_factory=lambda: [
+            r"RH_ScopedInstall\s*\(\s*(\w+)\s*,\s*(0x[0-9A-Fa-f]+)",
+            r"RH_ScopedVirtualInstall\s*\(\s*(\w+)\s*,\s*(0x[0-9A-Fa-f]+)",
+        ]
+    )
+    stub_patterns: list[str] = field(default_factory=lambda: [r"plugin::Call"])
+    stub_markers: list[str] = field(default_factory=lambda: ["NOTSA_UNREACHABLE"])
+    stub_call_prefix: str = "plugin::Call"
+    class_macro: str = "RH_ScopedClass"
     source_root: str = "source/game_sa"
     source_extensions: list[str] = field(default_factory=lambda: [".cpp", ".h", ".hpp"])
     hooks_csv: str | None = None
@@ -73,6 +78,8 @@ class ReverseOutputConfig:
 
 @dataclass
 class ReverseConfig:
+    """Reverse-engineering (Phase 1) configuration."""
+
     backend: BackendConfig = field(default_factory=BackendConfig)
     project_profile: ProjectProfile = field(default_factory=ProjectProfile)
     parity: ParityConfig = field(default_factory=ParityConfig)
@@ -82,21 +89,27 @@ class ReverseConfig:
 
 @dataclass
 class BuildInputConfig:
+    """Input directories for the build phase."""
+
     decompiled_dir: str = "reports/re-agent/code/"
     ghidra_exports: str = ".ghidra-exports/"
 
 
 @dataclass
 class BuildOutputConfig:
+    """Output configuration for the build phase."""
+
     language: str = "cpp"
     standard: str = "c++23"
-    compiler: str = r"C:\msys64\mingw32\bin\g++.exe"
-    compiler_flags: str = "-std=c++23 -m32 -c -Wall -Werror"
+    compiler: str = "g++"
+    compiler_flags: str = "-std=c++23 -c -Wall -Werror"
     target_dir: str = "output/"
 
 
 @dataclass
 class ProjectNaming:
+    """Naming conventions for generated project code."""
+
     classes: str = "PascalCase"
     functions: str = "camelCase"
     globals: str = "snake_case"
@@ -104,6 +117,8 @@ class ProjectNaming:
 
 @dataclass
 class ProjectConventions:
+    """Conventions for include style and function size limits."""
+
     naming: ProjectNaming = field(default_factory=ProjectNaming)
     includes: str = "use_forward_decl_when_possible"
     max_function_lines: int = 200
@@ -111,6 +126,8 @@ class ProjectConventions:
 
 @dataclass
 class BuildProjectConfig:
+    """Project metadata for the build output."""
+
     name: str = ""
     description: str = ""
     conventions: ProjectConventions = field(default_factory=ProjectConventions)
@@ -118,6 +135,8 @@ class BuildProjectConfig:
 
 @dataclass
 class ModulesConfig:
+    """Module clustering configuration."""
+
     expected: list[str] = field(default_factory=list)
     min_cluster_size: int = 20
     max_cluster_size: int = 300
@@ -125,6 +144,8 @@ class ModulesConfig:
 
 @dataclass
 class BuildOptimizationConfig:
+    """LLM optimization and caching configuration."""
+
     subunit_size: int = 10
     context_window: int = 3
     cache_enabled: bool = True
@@ -133,6 +154,8 @@ class BuildOptimizationConfig:
 
 @dataclass
 class ValidationConfig:
+    """Build validation (compilation checks) configuration."""
+
     compile_per_function: bool = True
     compile_per_module: bool = True
     compile_final_project: bool = True
@@ -141,12 +164,16 @@ class ValidationConfig:
 
 @dataclass
 class BuildResumeConfig:
+    """Build resumption configuration."""
+
     enabled: bool = True
     state_path: str = "cr-agent-state.json"
 
 
 @dataclass
 class BuildConfig:
+    """Build (Phase 2) configuration."""
+
     input: BuildInputConfig = field(default_factory=BuildInputConfig)
     output: BuildOutputConfig = field(default_factory=BuildOutputConfig)
     project: BuildProjectConfig = field(default_factory=BuildProjectConfig)
@@ -158,11 +185,15 @@ class BuildConfig:
 
 @dataclass
 class PipelineConfig:
+    """Pipeline orchestration configuration."""
+
     state_file: str = "pipeline-state.json"
 
 
 @dataclass
 class ReAgentConfig:
+    """Top-level unified configuration for re-agent (reverse + build + pipeline)."""
+
     llm: LLMConfig = field(default_factory=LLMConfig)
     reverse: ReverseConfig = field(default_factory=ReverseConfig)
     build: BuildConfig = field(default_factory=BuildConfig)

@@ -67,6 +67,9 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         ("RE_AGENT_LLM_BASE_URL", ["llm", "base_url"], str),
         ("RE_AGENT_BACKEND_CLI_PATH", ["reverse", "backend", "cli_path"], str),
         ("RE_AGENT_BACKEND_TIMEOUT", ["reverse", "backend", "timeout_s"], int),
+        # Legacy flat keys (backward compat)
+        ("RE_AGENT_BACKEND_CLI_PATH", ["backend", "cli_path"], str),
+        ("RE_AGENT_BACKEND_TIMEOUT", ["backend", "timeout_s"], int),
     ]
     for env_var, key_path, cast_type in env_mappings:
         value = os.environ.get(env_var)
@@ -125,7 +128,12 @@ def _build_with_coercion(cls: type[_T], data: dict[str, Any]) -> _T:
             type_str = ft if isinstance(ft, str) else getattr(ft, "__name__", str(ft))
             filtered[k] = _coerce_field(v, type_str)
         else:
-            _log.warning("Unknown config key '%s' in %s — ignored", k, cls.__name__)
+            _log.warning(
+                "Unknown config key '%s' in %s (known: %s) — ignored",
+                k,
+                cls.__name__,
+                ", ".join(sorted(known)),
+            )
     return cls(**filtered)
 
 
@@ -143,18 +151,22 @@ def _build_build_config(data: dict[str, Any]) -> BuildConfig:
     out = _build_with_coercion(BuildOutputConfig, data.get("output", {}))
 
     proj_raw = data.get("project", {})
+    if not isinstance(proj_raw, dict):
+        proj_raw = {}
     conv_raw = proj_raw.get("conventions", {})
+    if not isinstance(conv_raw, dict):
+        conv_raw = {}
     naming_raw = conv_raw.get("naming", {})
+    if not isinstance(naming_raw, dict):
+        naming_raw = {}
 
-    project = BuildProjectConfig(
-        name=proj_raw.get("name", ""),
-        description=proj_raw.get("description", ""),
-        conventions=ProjectConventions(
-            naming=ProjectNaming(**naming_raw),
-            includes=conv_raw.get("includes", "use_forward_decl_when_possible"),
-            max_function_lines=conv_raw.get("max_function_lines", 200),
-        ),
-    )
+    naming = _build_with_coercion(ProjectNaming, naming_raw)
+    conventions_raw = dict(conv_raw)
+    conventions_raw["naming"] = naming
+    conventions = _build_with_coercion(ProjectConventions, conventions_raw)
+    proj_dict = dict(proj_raw)
+    proj_dict["conventions"] = conventions
+    project = _build_with_coercion(BuildProjectConfig, proj_dict)
 
     modules = _build_with_coercion(ModulesConfig, data.get("modules", {}))
     opt = _build_with_coercion(BuildOptimizationConfig, data.get("optimization", {}))

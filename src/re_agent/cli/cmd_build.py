@@ -16,7 +16,8 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     state = PipelineState(pipeline_cfg.state_file)
 
-    phases = [args.phase] if args.phase else ["analyze", "transform", "assemble"]
+    phase = getattr(args, "phase", None)
+    phases = [phase] if phase else ["analyze", "transform", "assemble"]
 
     from re_agent.build.analyze.clusterer import cluster
     from re_agent.build.analyze.graph_builder import build_graph
@@ -24,25 +25,29 @@ def cmd_build(args: argparse.Namespace) -> int:
     from re_agent.build.assemble.tree_builder import build_tree
     from re_agent.build.transform.module_processor import process_modules
 
-    if "analyze" in phases:
-        print("=== Phase 1/3: Analyze (call graph + clustering) ===")
-        graph = build_graph(build_cfg)
-        modules = cluster(graph, build_cfg)
-        index_modules(modules, build_cfg)
-        mc = modules["metadata"]["module_count"]
-        oc = modules["metadata"]["orphan_count"]
-        print(f"Analyze complete: {mc} modules, {oc} orphans")
-        state.update_build("in_progress", phase="analyze", modules_completed=[])
+    try:
+        if "analyze" in phases:
+            print("=== Phase 1/3: Analyze (call graph + clustering) ===")
+            graph = build_graph(build_cfg)
+            modules = cluster(graph, build_cfg)
+            index_modules(modules, build_cfg)
+            mc = modules["metadata"]["module_count"]
+            oc = modules["metadata"]["orphan_count"]
+            print(f"Analyze complete: {mc} modules, {oc} orphans")
+            state.update_build("in_progress", phase="analyze", modules_completed=[])
 
-    if "transform" in phases:
-        print("=== Phase 2/3: Transform (LLM code refinement) ===")
-        process_modules(build_cfg)
-        state.update_build("in_progress", phase="transform", modules_completed=[])
+        if "transform" in phases:
+            print("=== Phase 2/3: Transform (LLM code refinement) ===")
+            process_modules(build_cfg)
+            state.update_build("in_progress", phase="transform", modules_completed=[])
 
-    if "assemble" in phases:
-        print("=== Phase 3/3: Assemble (project tree) ===")
-        build_tree(build_cfg)
-        state.update_build("completed")
+        if "assemble" in phases:
+            print("=== Phase 3/3: Assemble (project tree) ===")
+            build_tree(build_cfg)
+            state.update_build("completed")
+    except Exception:
+        state.update_build("failed")
+        raise
 
     print("Build complete.")
     return 0

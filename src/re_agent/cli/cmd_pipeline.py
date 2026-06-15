@@ -26,13 +26,18 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         print("=== Pipeline: Phase 1 — Reverse engineering ===")
         from re_agent.cli.cmd_reverse import cmd_reverse
 
-        rev_code = cmd_reverse(args)
+        try:
+            rev_code = cmd_reverse(args)
+        except Exception:
+            state.update_reverse("failed")
+            print("Reverse phase failed with exception. Pipeline stopped.", file=sys.stderr)
+            raise
         if rev_code != 0:
             state.update_reverse("failed")
             print("Reverse phase failed. Pipeline stopped.", file=sys.stderr)
             return rev_code
 
-        state.update_reverse("completed", functions_decompiled=0)
+        state.update_reverse("completed")
         print("Reverse phase complete.")
 
     if not build_ok and not args.skip_build:
@@ -42,13 +47,19 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         print("=== Pipeline: Phase 2 — Build ===")
         from re_agent.cli.cmd_build import cmd_build
 
-        build_code = cmd_build(args)
+        try:
+            build_code = cmd_build(args)
+        except Exception:
+            state.update_build("failed")
+            print("Build phase failed with exception. Pipeline stopped.", file=sys.stderr)
+            raise
         if build_code != 0:
             state.update_build("failed")
             print("Build phase failed. Pipeline stopped.", file=sys.stderr)
             return build_code
 
-        state.update_build("completed")
+        # cmd_build already wrote pipeline state to disk; reload to stay in sync
+        state = PipelineState(config.pipeline.state_file)
         print("Build phase complete.")
 
     print("Pipeline completed successfully.")
