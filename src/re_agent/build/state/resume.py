@@ -15,7 +15,7 @@ def save_state(data: dict[str, Any]) -> None:
 def load_state() -> dict[str, Any]:
     """Load saved pipeline state. Returns empty dict if no state exists."""
     if STATE_PATH.exists():
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        return json.loads(STATE_PATH.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
     return {}
 
 

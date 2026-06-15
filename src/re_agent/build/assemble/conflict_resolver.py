@@ -6,7 +6,7 @@ def resolve_conflicts(cfg: Any) -> None:
     target_dir = Path(cfg.output.target_dir)
     src_dir = target_dir / "src"
 
-    symbols = {}
+    symbols: dict[str, set[str]] = {}
     for module_dir in src_dir.iterdir():
         if not module_dir.is_dir():
             continue
@@ -22,7 +22,7 @@ def resolve_conflicts(cfg: Any) -> None:
                     name = stripped.split("(")[0].split()[-1].rstrip("(")
                     symbols[module_name].add(name)
 
-    all_symbols = {}
+    all_symbols: dict[str, list[str]] = {}
     for module, syms in symbols.items():
         for s in syms:
             all_symbols.setdefault(s, []).append(module)

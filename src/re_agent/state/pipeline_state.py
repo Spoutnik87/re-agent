@@ -18,7 +18,7 @@ class PipelineState:
     def _load(self) -> dict[str, Any]:
         if self.path.exists():
             try:
-                return json.loads(self.path.read_text(encoding="utf-8"))
+                return json.loads(self.path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
             except (json.JSONDecodeError, OSError):
                 pass
         return {
@@ -35,10 +35,10 @@ class PipelineState:
         self.path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
 
     def get_reverse_status(self) -> str:
-        return self._data["phases"].get("reverse", {}).get("status", "pending")
+        return self._data["phases"].get("reverse", {}).get("status", "pending")  # type: ignore[no-any-return]
 
     def get_build_status(self) -> str:
-        return self._data["phases"].get("build", {}).get("status", "pending")
+        return self._data["phases"].get("build", {}).get("status", "pending")  # type: ignore[no-any-return]
 
     def update_reverse(self, status: str, **kwargs: Any) -> None:
         self._data["phases"]["reverse"] = {

@@ -117,7 +117,7 @@ def _coerce_field(value: Any, field_type_str: str) -> Any:
 
 
 def _build_with_coercion(cls: type[_T], data: dict[str, Any]) -> _T:
-    known = {f.name: f for f in dataclasses.fields(cls)}
+    known = {f.name: f for f in dataclasses.fields(cls)}  # type: ignore[arg-type]
     filtered: dict[str, Any] = {}
     for k, v in data.items():
         if k in known:

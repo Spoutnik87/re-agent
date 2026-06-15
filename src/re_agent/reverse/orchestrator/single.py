@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from re_agent.config.schema import ReAgentConfig
+from re_agent.config.schema import ReverseConfig
 from re_agent.llm.protocol import LLMProvider
 from re_agent.reverse.agents.block_splitter import decompiled_line_count
 from re_agent.reverse.agents.few_shot_builder import pre_classify
@@ -35,7 +35,7 @@ def _compute_max_fix_rounds(line_count: int, max_rounds: int) -> int:
 
 def reverse_single(
     target: FunctionTarget,
-    config: ReAgentConfig,
+    config: ReverseConfig,
     backend: REBackend,
     llm: LLMProvider,
     session: Session | None = None,
@@ -111,7 +111,7 @@ def reverse_single(
                 if line_count > 1000:
                     logger.info("%s: %d lines — very large: flash block only", target.address, line_count)
                     block_result = reverse_blocks(
-                        **block_kwargs,  # type: ignore
+                        **block_kwargs,  # type: ignore[arg-type]
                         fast_mode=True,
                         skip_checker=True,
                         skip_var_mapping=True,
@@ -119,7 +119,7 @@ def reverse_single(
                 elif line_count > 500:
                     logger.info("%s: %d lines — large: flash block, fallback to standard", target.address, line_count)
                     block_result = reverse_blocks(
-                        **block_kwargs,  # type: ignore
+                        **block_kwargs,  # type: ignore[arg-type]
                         fast_mode=True,
                         skip_checker=True,
                         skip_var_mapping=True,
@@ -143,11 +143,11 @@ def reverse_single(
                         )
                 else:
                     # Tier 1: all-flash (fast_mode) — cheap, handles ~80%
-                    block_result = reverse_blocks(**block_kwargs, fast_mode=True)  # type: ignore
+                    block_result = reverse_blocks(**block_kwargs, fast_mode=True)  # type: ignore[arg-type]
                     if not block_result.success:
                         # Tier 2: hybrid pro/flash — handles remaining ~20%
                         logger.info("%s: fast_mode FAIL — escalating to hybrid", target.address)
-                        block_result = reverse_blocks(**block_kwargs, fast_mode=False)  # type: ignore
+                        block_result = reverse_blocks(**block_kwargs, fast_mode=False)  # type: ignore[arg-type]
 
                 if block_result is not None and block_result.success:
                     logger.info("%s: PASS (rounds=%d)", target.address, block_result.rounds_used)
@@ -214,7 +214,7 @@ def reverse_single(
 def _write_code(
     result: ReversalResult,
     target: FunctionTarget,
-    config: ReAgentConfig,
+    config: ReverseConfig,
     output_dir: Path | None,
 ) -> None:
     """Write generated code to a file (PASS only)."""
@@ -235,7 +235,7 @@ def _write_code(
 def _run_parity(
     result: ReversalResult,
     target: FunctionTarget,
-    config: ReAgentConfig,
+    config: ReverseConfig,
     backend: REBackend,
     indexer: SourceIndexer | None,
 ) -> None:

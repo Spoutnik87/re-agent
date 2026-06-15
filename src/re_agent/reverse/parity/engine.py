@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from re_agent.config.schema import ParityConfig, ReAgentConfig
+from re_agent.config.schema import ParityConfig, ReverseConfig
 from re_agent.reverse.backend.protocol import REBackend
 from re_agent.reverse.core.models import (
     Finding,
@@ -160,7 +160,7 @@ def fetch_ghidra_data(address: str, backend: REBackend) -> GhidraData:
 def run_parity(
     hooks: list[HookEntry],
     source_root: Path,
-    config: ReAgentConfig,
+    config: ReverseConfig,
     backend: REBackend | None = None,
     ghidra_data_map: dict[str, GhidraData] | None = None,
 ) -> list[dict[str, Any]]:

@@ -13,11 +13,12 @@ class TransformCache:
 
     def __init__(self, cache_path: str = ".cr-agent-cache.json") -> None:
         self._cache_path = cache_path
+        self._data: dict[str, dict[str, Any]]
         if os.path.exists(cache_path):
             with open(cache_path, encoding="utf-8") as f:
-                self._data: dict[str, dict[str, Any]] = json.load(f)
+                self._data = json.load(f)
         else:
-            self._data: dict[str, dict[str, Any]] = {}
+            self._data = {}
 
     @staticmethod
     def hash_source(source: str) -> str:
@@ -46,7 +47,7 @@ class TransformCache:
         entry = self._data.get(address)
         if entry is None:
             return False
-        return entry["hash"] == self.hash_source(source)
+        return bool(entry["hash"] == self.hash_source(source))
 
     def size(self) -> int:
         return len(self._data)

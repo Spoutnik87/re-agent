@@ -6,7 +6,7 @@ import logging
 import sys
 from pathlib import Path
 
-from re_agent.config.schema import ReAgentConfig
+from re_agent.config.schema import ReverseConfig
 from re_agent.llm.protocol import LLMProvider
 from re_agent.reverse.backend.protocol import REBackend
 from re_agent.reverse.core.function_picker import pick_next
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def reverse_class(
     class_name: str,
-    config: ReAgentConfig,
+    config: ReverseConfig,
     backend: REBackend,
     llm: LLMProvider,
     session: Session | None = None,

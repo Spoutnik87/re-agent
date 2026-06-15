@@ -53,14 +53,14 @@ def cmd_status(args: argparse.Namespace) -> int:
     if args.phase == "build":
         from re_agent.build.state.resume import load_state
 
-        state = load_state()
-        if not state:
+        build_state = load_state()
+        if not build_state:
             print("No build state found.")
             return 0
-        print(f"Build phase: {state.get('phase', 'unknown')}")
-        print(f"Completed modules: {state.get('completed_modules', [])}")
-        print(f"Current module: {state.get('current_module', 'none')}")
-        print(f"Current sub-unit: {state.get('current_subunit', 0)}")
+        print(f"Build phase: {build_state.get('phase', 'unknown')}")
+        print(f"Completed modules: {build_state.get('completed_modules', [])}")
+        print(f"Current module: {build_state.get('current_module', 'none')}")
+        print(f"Current sub-unit: {build_state.get('current_subunit', 0)}")
         return 0
 
     state = PipelineState(config.pipeline.state_file)
