@@ -61,8 +61,8 @@ def run_fix_loop(
     if checker_llm is None:
         checker_llm = reverser_llm
 
-    # Profile overrides explicit params when provided
-    effective_max_rounds = profile.max_rounds if profile is not None else max_rounds
+    # Profile provides a floor; CLI/explicit max_rounds can raise above it
+    effective_max_rounds = max(profile.max_rounds, max_rounds) if profile is not None else max_rounds
     effective_phase1 = profile.enable_phase1 if profile is not None else enable_phase1
     effective_obj_verify = profile.use_objective_verifier if profile is not None else objective_verifier_enabled
     inject_src_ctx = profile.inject_source_context if profile is not None else True
