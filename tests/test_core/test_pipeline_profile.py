@@ -5,21 +5,21 @@ from re_agent.reverse.core.models import profile_for
 
 def test_leaf_profile_skips_all_extras() -> None:
     p = profile_for("leaf")
-    assert p.max_rounds == 2
+    assert p.max_rounds == 1
     assert p.enable_phase1 is False
     assert p.inject_source_context is False
     assert p.inject_few_shot is False
-    assert p.use_objective_verifier is True
+    assert p.use_objective_verifier is False
     assert p.few_shot_max_examples == 0
 
 
 def test_getter_setter_profile_matches_leaf() -> None:
     p = profile_for("getter-setter")
-    assert p.max_rounds == 2
+    assert p.max_rounds == 1
     assert p.enable_phase1 is False
     assert p.inject_source_context is False
     assert p.inject_few_shot is False
-    assert p.use_objective_verifier is True
+    assert p.use_objective_verifier is False
     assert p.few_shot_max_examples == 0
 
 
