@@ -1,4 +1,4 @@
-"""Configuration schema dataclasses for re-agent."""
+"""Unified configuration schema for re-agent (reverse + build + pipeline)."""
 
 from __future__ import annotations
 
@@ -6,53 +6,9 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class ProjectProfile:
-    """Project-specific patterns and paths."""
-
-    hook_patterns: list[str] = field(
-        default_factory=lambda: [
-            r"RH_ScopedInstall\s*\(\s*(\w+)\s*,\s*(0x[0-9A-Fa-f]+)",
-            r"RH_ScopedVirtualInstall\s*\(\s*(\w+)\s*,\s*(0x[0-9A-Fa-f]+)",
-        ]
-    )
-    stub_patterns: list[str] = field(
-        default_factory=lambda: [
-            r"plugin::Call",
-        ]
-    )
-    stub_markers: list[str] = field(
-        default_factory=lambda: [
-            "NOTSA_UNREACHABLE",
-        ]
-    )
-    stub_call_prefix: str = "plugin::Call"
-    class_macro: str = "RH_ScopedClass"
-    source_root: str = "source/game_sa"
-    source_extensions: list[str] = field(
-        default_factory=lambda: [
-            ".cpp",
-            ".h",
-            ".hpp",
-        ]
-    )
-    hooks_csv: str | None = "docs/hooks.csv"
-    project_description: str = ""
-    project_context: str = ""
-    checker_custom_rules: str = ""
-
-
-@dataclass
 class LLMConfig:
-    """LLM provider configuration.
-
-    ``model`` is used for reasoning-heavy tasks (checker, skeleton, decomposition).
-    ``block_model``, when set, overrides ``model`` for block-level reversals
-    (many small calls where a cheaper/faster model suffices).
-    When ``None``, ``model`` is used for everything.
-    """
-
-    provider: str = "claude"
-    model: str = "claude-sonnet-4-5-20250929"
+    provider: str = "openai-compat"
+    model: str = "deepseek/deepseek-v4-flash"
     block_model: str | None = None
     api_key: str | None = None
     base_url: str | None = None
@@ -63,17 +19,28 @@ class LLMConfig:
 
 @dataclass
 class BackendConfig:
-    """Decompiler backend configuration."""
-
     type: str = "ghidra-bridge"
     cli_path: str = "ghidra"
     timeout_s: int = 45
 
 
 @dataclass
-class ParityConfig:
-    """Static parity verification settings."""
+class ProjectProfile:
+    hook_patterns: list[str] = field(default_factory=list)
+    stub_patterns: list[str] = field(default_factory=list)
+    stub_markers: list[str] = field(default_factory=list)
+    stub_call_prefix: str = ""
+    class_macro: str = ""
+    source_root: str = "source/game_sa"
+    source_extensions: list[str] = field(default_factory=lambda: [".cpp", ".h", ".hpp"])
+    hooks_csv: str | None = None
+    project_description: str = ""
+    project_context: str = ""
+    checker_custom_rules: str = ""
 
+
+@dataclass
+class ParityConfig:
     enabled: bool = True
     call_count_warn_diff: int = 3
     inline_wrapper_autoskip: bool = False
@@ -84,8 +51,6 @@ class ParityConfig:
 
 @dataclass
 class OrchestratorConfig:
-    """Orchestrator loop settings."""
-
     optimize: bool = True
     enable_phase1: bool = True
     max_review_rounds: int = 4
@@ -99,9 +64,7 @@ class OrchestratorConfig:
 
 
 @dataclass
-class OutputConfig:
-    """Output and reporting settings."""
-
+class ReverseOutputConfig:
     report_dir: str = "reports/re-agent"
     log_dir: str = "reports/re-agent/logs"
     session_file: str = "re-agent-progress.json"
@@ -109,24 +72,102 @@ class OutputConfig:
 
 
 @dataclass
-class ReAgentConfig:
-    """Top-level configuration for the re-agent system."""
-
-    project_profile: ProjectProfile = field(default_factory=ProjectProfile)
-    llm: LLMConfig = field(default_factory=LLMConfig)
+class ReverseConfig:
     backend: BackendConfig = field(default_factory=BackendConfig)
+    project_profile: ProjectProfile = field(default_factory=ProjectProfile)
     parity: ParityConfig = field(default_factory=ParityConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
-    output: OutputConfig = field(default_factory=OutputConfig)
+    output: ReverseOutputConfig = field(default_factory=ReverseOutputConfig)
+
+
+@dataclass
+class BuildInputConfig:
+    decompiled_dir: str = "reports/re-agent/code/"
+    ghidra_exports: str = ".ghidra-exports/"
+
+
+@dataclass
+class BuildOutputConfig:
+    language: str = "cpp"
+    standard: str = "c++23"
+    compiler: str = r"C:\msys64\mingw32\bin\g++.exe"
+    compiler_flags: str = "-std=c++23 -m32 -c -Wall -Werror"
+    target_dir: str = "output/"
+
+
+@dataclass
+class ProjectNaming:
+    classes: str = "PascalCase"
+    functions: str = "camelCase"
+    globals: str = "snake_case"
+
+
+@dataclass
+class ProjectConventions:
+    naming: ProjectNaming = field(default_factory=ProjectNaming)
+    includes: str = "use_forward_decl_when_possible"
+    max_function_lines: int = 200
+
+
+@dataclass
+class BuildProjectConfig:
+    name: str = ""
+    description: str = ""
+    conventions: ProjectConventions = field(default_factory=ProjectConventions)
+
+
+@dataclass
+class ModulesConfig:
+    expected: list[str] = field(default_factory=list)
+    min_cluster_size: int = 20
+    max_cluster_size: int = 300
+
+
+@dataclass
+class BuildOptimizationConfig:
+    subunit_size: int = 10
+    context_window: int = 3
+    cache_enabled: bool = True
+    cache_path: str = ".cr-agent-cache.json"
+
+
+@dataclass
+class ValidationConfig:
+    compile_per_function: bool = True
+    compile_per_module: bool = True
+    compile_final_project: bool = True
+    max_compile_retries: int = 1
+
+
+@dataclass
+class BuildResumeConfig:
+    enabled: bool = True
+    state_path: str = "cr-agent-state.json"
+
+
+@dataclass
+class BuildConfig:
+    input: BuildInputConfig = field(default_factory=BuildInputConfig)
+    output: BuildOutputConfig = field(default_factory=BuildOutputConfig)
+    project: BuildProjectConfig = field(default_factory=BuildProjectConfig)
+    modules: ModulesConfig = field(default_factory=ModulesConfig)
+    optimization: BuildOptimizationConfig = field(default_factory=BuildOptimizationConfig)
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
+    resume: BuildResumeConfig = field(default_factory=BuildResumeConfig)
+
+
+@dataclass
+class PipelineConfig:
+    state_file: str = "pipeline-state.json"
+
+
+@dataclass
+class ReAgentConfig:
+    llm: LLMConfig = field(default_factory=LLMConfig)
+    reverse: ReverseConfig = field(default_factory=ReverseConfig)
+    build: BuildConfig = field(default_factory=BuildConfig)
+    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
     @classmethod
     def create_default(cls) -> ReAgentConfig:
-        """Create a configuration with all default values."""
-        return cls(
-            project_profile=ProjectProfile(),
-            llm=LLMConfig(),
-            backend=BackendConfig(),
-            parity=ParityConfig(),
-            orchestrator=OrchestratorConfig(),
-            output=OutputConfig(),
-        )
+        return cls()
