@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from re_agent.agents.checker import CheckerAgent
 from re_agent.core.models import DecompileResult, FunctionTarget
+
 from re_agent.llm.protocol import Message
 
 

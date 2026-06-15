@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from re_agent.config.schema import ParityConfig, ProjectProfile, ReAgentConfig
 from re_agent.core.models import HookEntry, ParityStatus
 from re_agent.parity.engine import run_parity
+
+from re_agent.config.schema import ParityConfig, ProjectProfile, ReAgentConfig
 
 
 def _make_config(source_root: str) -> ReAgentConfig:

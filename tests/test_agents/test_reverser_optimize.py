@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from re_agent.agents.reverser import ReverserAgent
-from re_agent.config.schema import ProjectProfile
 from re_agent.core.models import FunctionTarget
+
+from re_agent.config.schema import ProjectProfile
 from re_agent.llm.protocol import Message
 
 

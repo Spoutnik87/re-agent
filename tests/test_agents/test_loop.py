@@ -5,6 +5,7 @@ from __future__ import annotations
 from re_agent.agents.loop import run_fix_loop
 from re_agent.backend.stub import StubBackend
 from re_agent.core.models import AsmResult, DecompileResult, FunctionTarget, Verdict
+
 from re_agent.llm.protocol import Message
 
 

@@ -6,6 +6,7 @@ from typing import Any
 
 from re_agent.agents.block_reverser import BlockReverserAgent
 from re_agent.agents.block_splitter import Block
+
 from re_agent.llm.protocol import Message
 
 
