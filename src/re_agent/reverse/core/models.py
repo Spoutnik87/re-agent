@@ -293,19 +293,19 @@ class PipelineProfile:
 
 _PROFILES: dict[str, PipelineProfile] = {
     "leaf": PipelineProfile(
-        max_rounds=1,
+        max_rounds=2,
         enable_phase1=False,
         inject_source_context=False,
         inject_few_shot=False,
-        use_objective_verifier=False,
+        use_objective_verifier=True,
         few_shot_max_examples=0,
     ),
     "getter-setter": PipelineProfile(
-        max_rounds=1,
+        max_rounds=2,
         enable_phase1=False,
         inject_source_context=False,
         inject_few_shot=False,
-        use_objective_verifier=False,
+        use_objective_verifier=True,
         few_shot_max_examples=0,
     ),
     "win32-api": PipelineProfile(
