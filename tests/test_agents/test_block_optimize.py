@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from re_agent.agents.block_reverser import BlockReverserAgent
-from re_agent.agents.block_splitter import Block
-
 from re_agent.llm.protocol import Message
+from re_agent.reverse.agents.block_reverser import BlockReverserAgent
+from re_agent.reverse.agents.block_splitter import Block
 
 
 class CapturingProvider:

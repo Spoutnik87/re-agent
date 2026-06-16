@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from re_agent.backend.stub import StubBackend
-from re_agent.core.function_picker import pick_next
-from re_agent.core.models import FunctionEntry
-from re_agent.core.session import Session
+from re_agent.reverse.backend.stub import StubBackend
+from re_agent.reverse.core.function_picker import pick_next
+from re_agent.reverse.core.models import FunctionEntry
+from re_agent.reverse.core.session import Session
 
 
 def test_pick_next_returns_highest_caller(tmp_path: Path) -> None:
@@ -25,7 +25,7 @@ def test_pick_next_returns_highest_caller(tmp_path: Path) -> None:
 
 
 def test_pick_next_skips_completed(tmp_path: Path) -> None:
-    from re_agent.core.models import FunctionTarget, ReversalResult
+    from re_agent.reverse.core.models import FunctionTarget, ReversalResult
 
     session = Session(tmp_path / "progress.json")
     # Record one as completed

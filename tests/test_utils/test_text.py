@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from re_agent.utils.text import strip_comments, strip_ghidra_noise
+from re_agent.reverse.utils.text import strip_comments, strip_ghidra_noise
 
 
 def test_strip_ghidra_noise_removes_warning_lines() -> None:

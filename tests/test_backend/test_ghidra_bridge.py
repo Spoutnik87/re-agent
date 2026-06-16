@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from re_agent.backend.ghidra_bridge import GhidraBridgeBackend
-from re_agent.backend.protocol import BackendCapabilities, REBackend
-from re_agent.backend.stub import StubBackend
-from re_agent.core.models import FunctionEntry
+from re_agent.reverse.backend.ghidra_bridge import GhidraBridgeBackend
+from re_agent.reverse.backend.protocol import BackendCapabilities, REBackend
+from re_agent.reverse.backend.stub import StubBackend
+from re_agent.reverse.core.models import FunctionEntry
 
 
 def test_stub_backend_capabilities() -> None:
@@ -45,7 +45,7 @@ def test_stub_backend_is_re_backend() -> None:
 def test_subcmd_exists_exit_zero() -> None:
     """Exit code 0 means the sub-command is available."""
     backend = GhidraBridgeBackend(cli_path="fake-ghidra")
-    with patch("re_agent.backend.ghidra_bridge.run_cmd_split") as mock:
+    with patch("re_agent.reverse.backend.ghidra_bridge.run_cmd_split") as mock:
         mock.return_value = (0, "help text", "")
         assert backend._subcmd_exists("asm") is True
         mock.assert_called_once()
@@ -54,7 +54,7 @@ def test_subcmd_exists_exit_zero() -> None:
 def test_subcmd_exists_unknown_command_in_stderr() -> None:
     """'unknown command' in stderr means the sub-command does NOT exist."""
     backend = GhidraBridgeBackend(cli_path="fake-ghidra")
-    with patch("re_agent.backend.ghidra_bridge.run_cmd_split") as mock:
+    with patch("re_agent.reverse.backend.ghidra_bridge.run_cmd_split") as mock:
         mock.return_value = (1, "", "Error: unknown command 'asm'")
         assert backend._subcmd_exists("asm") is False
 
@@ -62,7 +62,7 @@ def test_subcmd_exists_unknown_command_in_stderr() -> None:
 def test_subcmd_exists_nonzero_no_unknown_pattern() -> None:
     """Non-zero exit with no 'unknown command' pattern means available."""
     backend = GhidraBridgeBackend(cli_path="fake-ghidra")
-    with patch("re_agent.backend.ghidra_bridge.run_cmd_split") as mock:
+    with patch("re_agent.reverse.backend.ghidra_bridge.run_cmd_split") as mock:
         # First call: --help returns non-zero with generic error
         # Second call: __probe__ also returns non-zero with generic error
         mock.side_effect = [
@@ -75,7 +75,7 @@ def test_subcmd_exists_nonzero_no_unknown_pattern() -> None:
 def test_subcmd_exists_unrecognized_args_not_false_negative() -> None:
     """'unrecognized arguments' should NOT cause false negatives."""
     backend = GhidraBridgeBackend(cli_path="fake-ghidra")
-    with patch("re_agent.backend.ghidra_bridge.run_cmd_split") as mock:
+    with patch("re_agent.reverse.backend.ghidra_bridge.run_cmd_split") as mock:
         # --help returns non-zero with "unrecognized arguments"
         # This should NOT be treated as "unknown command"
         mock.side_effect = [
