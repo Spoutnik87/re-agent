@@ -32,7 +32,7 @@ def _render_system_prompt(cfg: Any, module_name: str) -> str:
     template_path = _PROMPT_DIR / "transform_system.md"
     template = Template(template_path.read_text(encoding="utf-8"))
     naming = cfg.project.conventions.naming
-    return template.render(
+    _prompt: str = template.render(
         language=getattr(cfg.output, "language", "C++"),
         standard=getattr(cfg.output, "standard", "C++17"),
         project_description=cfg.project.description,
@@ -43,16 +43,18 @@ def _render_system_prompt(cfg: Any, module_name: str) -> str:
         max_function_lines=getattr(cfg.project.conventions, "max_function_lines", 200),
         module_name=module_name,
     )
+    return _prompt
 
 
 def _render_task_prompt(module_name: str, subunit_context: dict[str, Any]) -> str:
     template_path = _PROMPT_DIR / "transform_task.md"
     template = Template(template_path.read_text(encoding="utf-8"))
-    return template.render(
+    _prompt: str = template.render(
         module_name=module_name,
         neighbours=subunit_context.get("neighbour_context", []),
         functions=subunit_context.get("functions_to_transform", []),
     )
+    return _prompt
 
 
 def _build_retry_prompt(output_file: str, err: str) -> str:

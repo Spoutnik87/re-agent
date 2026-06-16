@@ -59,7 +59,7 @@ warn_return_any = true
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["anthropic.*", "openai.*"]
+module = ["anthropic.*", "openai.*", "jinja2"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

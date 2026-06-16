@@ -77,7 +77,11 @@ def reverse_single(
                 line_count,
                 classification,
             )
-            if line_count >= config.orchestrator.block_threshold_lines:
+            # Skip expensive block decomposition for trivial functions
+            if pipeline_profile.max_rounds == 1 and line_count < 100:
+                logger.info("%s: trivial %s — skipping block reversal", target.address, classification)
+                block_result = None
+            elif line_count >= config.orchestrator.block_threshold_lines:
                 effective_max_rounds = _compute_max_fix_rounds(line_count, config.orchestrator.max_review_rounds)
                 logger.info(
                     "%s: %d lines — effective max fix rounds: %d (from %d)",
