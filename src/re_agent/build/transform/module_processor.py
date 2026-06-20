@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -13,15 +12,6 @@ from re_agent.build.transform.subunit_processor import (
     process_subunit,
 )
 from re_agent.llm.registry import create_provider
-
-_FILE_MARKER_RE = re.compile(r"^// FILE: (.+)$", re.MULTILINE)
-
-
-def _parse_filename_from_output(output_file: str, fallback: str) -> str:
-    m = _FILE_MARKER_RE.search(output_file)
-    if m:
-        return m.group(1).strip()
-    return fallback
 
 
 def process_modules(cfg: Any) -> None:
@@ -87,23 +77,24 @@ def process_modules(cfg: Any) -> None:
             results = process_subunit(context, module_name, llm, cfg, cache)
 
             for r in results:
-                if r.get("compiles") and r.get("output_file"):
-                    filename = _parse_filename_from_output(r["output_file"], r["function"])
-                    output_path = module_dir / f"{filename}.cpp"
-                    output_path.write_text(r["output_file"], encoding="utf-8")
+                if r.get("compiles") and r.get("files"):
+                    for f in r["files"]:
+                        filename = Path(f["path"]).name
+                        output_path = module_dir / filename
+                        output_path.write_text(f["content"], encoding="utf-8")
 
                 if cache is not None:
-                    # Look up the real decompiled source for this address
                     addr = r["function"]
                     source_for_addr = ""
                     for func in context.get("functions_to_transform", []):
                         if func["address"] == addr:
                             source_for_addr = func["code"]
                             break
+                    combined_output = "\n".join(f["content"] for f in r.get("files", []))
                     cache.set(
                         addr,
                         source_for_addr,
-                        r.get("output_file", ""),
+                        combined_output,
                         r.get("compiles", False),
                         0,
                         prompt_hash=prompt_hash,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from re_agent.build.transform.subunit_processor import process_subunit
+from re_agent.build.transform.subunit_processor import _parse_llm_response, process_subunit
 from re_agent.llm.protocol import Message
 
 
@@ -35,9 +35,26 @@ class _FakeProvider:
         raise NotImplementedError
 
 
-def test_process_subunit_uses_shared_provider_protocol(monkeypatch) -> None:
-    """process_subunit must accept any LLMProvider, not the deleted LLMClient."""
-    response = "// FILE: 0x1000\n#pragma once\nstruct Class {};\n"
+def test_parse_llm_response_returns_all_files() -> None:
+    """_parse_llm_response must return ALL // FILE: blocks, not just the first."""
+    response = (
+        "// FILE: include/mod/Class.h\n#pragma once\nstruct Class {};\n"
+        '\n// FILE: src/mod/Class.cpp\n#include "Class.h"\nvoid Class::f() {}\n'
+    )
+    files = _parse_llm_response(response)
+    assert len(files) == 2
+    paths = [f["path"] for f in files]
+    assert "include/mod/Class.h" in paths
+    assert "src/mod/Class.cpp" in paths
+
+
+def test_process_subunit_returns_files_list_not_single_output(monkeypatch) -> None:
+    """Each result must carry a 'files' list of {path, content} dicts,
+    not a single 'output_file' string keyed by address."""
+    response = (
+        "// FILE: include/mod/Class.h\n#pragma once\nstruct Class {};\n"
+        '\n// FILE: src/mod/Class.cpp\n#include "Class.h"\nvoid Class::f() {}\n'
+    )
     provider = _FakeProvider(response)
 
     class _Cfg:
@@ -67,7 +84,50 @@ def test_process_subunit_uses_shared_provider_protocol(monkeypatch) -> None:
     monkeypatch.setattr(sp, "_render_task_prompt", lambda mn, ctx: "task")
 
     ctx = {
-        "functions_to_transform": [{"address": "0x1000", "source": "void f() {}", "name": "f"}],
+        "functions_to_transform": [{"address": "0x1000", "code": "void f() {}", "name": "f"}],
+        "neighbour_context": [],
+    }
+    results = process_subunit(ctx, "mod", provider, _Cfg(), cache=None)
+    assert len(results) == 1
+    r = results[0]
+    assert "files" in r, "result must have 'files' list"
+    assert len(r["files"]) == 2
+    assert r["compiles"] is True
+
+
+def test_process_subunit_uses_shared_provider_protocol(monkeypatch) -> None:
+    """process_subunit must accept any LLMProvider, not the deleted LLMClient."""
+    response = "// FILE: src/mod/f.cpp\nvoid f() {}\n"
+    provider = _FakeProvider(response)
+
+    class _Cfg:
+        class output:
+            language = "C++"
+            standard = "c++23"
+
+        class project:
+            description = ""
+
+            class conventions:
+                class naming:
+                    classes = "PascalCase"
+                    functions = "camelCase"
+                    globals = "snake_case"
+
+                includes_rule = ""
+                max_function_lines = 200
+
+        class validation:
+            max_compile_retries = 0
+
+    import re_agent.build.transform.subunit_processor as sp
+
+    monkeypatch.setattr(sp, "compile_check", lambda code, cfg: (True, ""))
+    monkeypatch.setattr(sp, "_render_system_prompt", lambda cfg, mn: "system")
+    monkeypatch.setattr(sp, "_render_task_prompt", lambda mn, ctx: "task")
+
+    ctx = {
+        "functions_to_transform": [{"address": "0x1000", "code": "void f() {}", "name": "f"}],
         "neighbour_context": [],
     }
     results = process_subunit(ctx, "mod", provider, _Cfg(), cache=None)

@@ -76,3 +76,5 @@ class LLMProvider(Protocol):
     # these default to 0 via getattr). Used by the orchestrator's cost report.
     total_cache_hit_tokens: int
     total_cache_miss_tokens: int
+    total_prompt_tokens: int
+    total_completion_tokens: int
