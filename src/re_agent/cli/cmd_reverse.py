@@ -7,40 +7,38 @@ import sys
 from pathlib import Path
 
 from re_agent.config.loader import load_config
-from re_agent.core.models import FunctionTarget
-from re_agent.reports.formatter import format_result
+from re_agent.reverse.core.models import FunctionTarget
+from re_agent.reverse.reports.formatter import format_result
 
 
 def cmd_reverse(args: argparse.Namespace) -> int:
     config = load_config(Path(args.config))
+    rev_cfg = config.reverse
 
     if args.max_rounds is not None:
-        config.orchestrator.max_review_rounds = args.max_rounds
+        rev_cfg.orchestrator.max_review_rounds = args.max_rounds
     if args.skip_parity:
-        config.parity.enabled = False
+        rev_cfg.parity.enabled = False
     if args.no_optimize:
-        config.orchestrator.optimize = False
+        rev_cfg.orchestrator.optimize = False
 
     if args.dry_run:
         return _dry_run(args, config)
 
-    # Lazy imports to avoid loading LLM/backend unless needed
-    from re_agent.backend.registry import create_backend
-    from re_agent.core.session import Session
     from re_agent.llm.registry import create_block_provider, create_provider
+    from re_agent.reverse.backend.registry import create_backend
+    from re_agent.reverse.core.session import Session
 
     llm = create_provider(config.llm)
-    block_llm = create_block_provider(config.llm)  # None if block_model not set
-    backend = create_backend(config.backend)
-    session = Session(config.output.session_file)
+    block_llm = create_block_provider(config.llm)
+    backend = create_backend(rev_cfg.backend)
+    session = Session(rev_cfg.output.session_file)
 
     if args.address:
-        from re_agent.orchestrator.single import reverse_single
+        from re_agent.reverse.orchestrator.single import reverse_single
 
         class_name = args.class_name or ""
         function_name = ""
-
-        # Try to resolve function metadata from the backend
         if not class_name:
             try:
                 dec = backend.decompile(args.address)
@@ -49,23 +47,23 @@ def cmd_reverse(args: argparse.Namespace) -> int:
                 elif dec.name:
                     function_name = dec.name
             except Exception:
-                pass  # Best-effort; proceed with empty metadata
+                pass
 
         target = FunctionTarget(
             address=args.address,
             class_name=class_name,
             function_name=function_name,
         )
-        result = reverse_single(target, config, backend, llm, session, block_llm=block_llm)
+        result = reverse_single(target, rev_cfg, backend, llm, session, block_llm=block_llm)
         print(format_result(result))
         return 0 if result.success else 1
 
     if args.class_name:
-        from re_agent.orchestrator.class_runner import reverse_class
+        from re_agent.reverse.orchestrator.class_runner import reverse_class
 
         results = reverse_class(
             class_name=args.class_name,
-            config=config,
+            config=rev_cfg,
             backend=backend,
             llm=llm,
             session=session,
@@ -87,19 +85,16 @@ def cmd_reverse(args: argparse.Namespace) -> int:
 
 def _dry_run(args: argparse.Namespace, config: object) -> int:
     print("Dry run mode — no LLM calls will be made.\n")
-
     if args.address:
         print(f"Would reverse: {args.address}")
         if args.class_name:
             print(f"  Class: {args.class_name}")
         return 0
-
     if args.class_name:
         print(f"Would reverse functions in class: {args.class_name}")
         max_fn = args.max_functions or 10
         print(f"  Max functions: {max_fn}")
         print(f"  Max rounds per function: {args.max_rounds or 4}")
         return 0
-
     print("Error: specify --address or --class", file=sys.stderr)
     return 1

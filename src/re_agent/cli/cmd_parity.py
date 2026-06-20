@@ -9,14 +9,15 @@ import sys
 from pathlib import Path
 
 from re_agent.config.loader import load_config
-from re_agent.core.models import HookEntry, ParityStatus
-from re_agent.parity.engine import read_hooks, run_parity
-from re_agent.utils.address import normalize_address
+from re_agent.reverse.core.models import HookEntry, ParityStatus
+from re_agent.reverse.parity.engine import read_hooks, run_parity
+from re_agent.reverse.utils.address import normalize_address
 
 
 def cmd_parity(args: argparse.Namespace) -> int:
     config = load_config(Path(args.config))
-    profile = config.project_profile
+    rev_cfg = config.reverse
+    profile = rev_cfg.project_profile
 
     source_root = Path(profile.source_root)
     if not source_root.exists():
@@ -32,34 +33,23 @@ def cmd_parity(args: argparse.Namespace) -> int:
         else:
             print(f"Warning: hooks CSV not found: {hooks_path}", file=sys.stderr)
 
-    # Filter by address, or synthesize HookEntry for addresses not in CSV
     if args.address:
         wanted = {normalize_address(a) for a in args.address}
         matched = [h for h in hooks if normalize_address(h.address) in wanted]
-        # Create entries for any addresses not found in the CSV
         matched_addrs = {normalize_address(h.address) for h in matched}
         for addr in wanted - matched_addrs:
             matched.append(
-                HookEntry(
-                    class_path="",
-                    fn_name="",
-                    address=addr,
-                    reversed=True,
-                    locked=False,
-                    is_virtual=False,
-                )
+                HookEntry(class_path="", fn_name="", address=addr, reversed=True, locked=False, is_virtual=False)
             )
         hooks = matched
     elif not hooks:
         print("No hooks loaded. Provide --address or configure hooks_csv in project_profile.", file=sys.stderr)
         return 1
 
-    # Filter by regex
     if args.filter:
         rx = re.compile(args.filter)
         hooks = [h for h in hooks if rx.search(h.symbol) or rx.search(h.class_path)]
 
-    # Limit
     if args.limit:
         hooks = hooks[: args.limit]
 
@@ -70,15 +60,14 @@ def cmd_parity(args: argparse.Namespace) -> int:
     backend = None
     if not args.skip_ghidra:
         try:
-            from re_agent.backend.registry import create_backend
+            from re_agent.reverse.backend.registry import create_backend
 
-            backend = create_backend(config.backend)
+            backend = create_backend(rev_cfg.backend)
         except Exception as exc:
             print(f"Warning: could not initialize backend ({exc}), running source-only checks", file=sys.stderr)
 
-    results = run_parity(hooks, source_root, config, backend=backend)
+    results = run_parity(hooks, source_root, rev_cfg, backend=backend)
 
-    # Print results
     counts: dict[str, int] = {s.value: 0 for s in ParityStatus}
     for r in results:
         status = r["status"]

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from re_agent.agents.reverser import ReverserAgent
 from re_agent.config.schema import ProjectProfile
-from re_agent.core.models import FunctionTarget
 from re_agent.llm.protocol import Message
+from re_agent.reverse.agents.reverser import ReverserAgent
+from re_agent.reverse.core.models import FunctionTarget
 
 
 class RecordingLLM:
@@ -226,7 +226,7 @@ def test_inject_source_context_false_skips_source_context_build(tmp_path: Path) 
 
 def test_inject_few_shot_false_skips_few_shot_injection(tmp_path: Path) -> None:
     """When inject_few_shot=False, few-shot examples are not injected even if index has matches."""
-    from re_agent.agents.few_shot_builder import FewShotBuilder
+    from re_agent.reverse.agents.few_shot_builder import FewShotBuilder
 
     FewShotBuilder.clear_cache()
     (tmp_path / "0x111_CFoo_bar.cpp").write_text("void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8")
@@ -249,7 +249,7 @@ def test_inject_few_shot_false_skips_few_shot_injection(tmp_path: Path) -> None:
 
 def test_inject_few_shot_true_with_examples_injects_them(tmp_path: Path) -> None:
     """When inject_few_shot=True (default), found examples are injected."""
-    from re_agent.agents.few_shot_builder import FewShotBuilder
+    from re_agent.reverse.agents.few_shot_builder import FewShotBuilder
 
     FewShotBuilder.clear_cache()
     (tmp_path / "0x111_CFoo_bar.cpp").write_text("void CFoo::bar() { baz(); qux(); }\n", encoding="utf-8")
@@ -272,7 +272,7 @@ def test_inject_few_shot_true_with_examples_injects_them(tmp_path: Path) -> None
 
 def test_few_shot_max_examples_limits_injected_count(tmp_path: Path) -> None:
     """few_shot_max_examples=1 injects at most one example."""
-    from re_agent.agents.few_shot_builder import FewShotBuilder
+    from re_agent.reverse.agents.few_shot_builder import FewShotBuilder
 
     FewShotBuilder.clear_cache()
     for i in range(5):
@@ -299,7 +299,7 @@ def test_few_shot_max_examples_limits_injected_count(tmp_path: Path) -> None:
 
 def test_few_shot_skipped_when_similarity_below_threshold(tmp_path: Path) -> None:
     """Few-shot examples are skipped when the best match score is below min_score."""
-    from re_agent.agents.few_shot_builder import FewShotBuilder
+    from re_agent.reverse.agents.few_shot_builder import FewShotBuilder
 
     FewShotBuilder.clear_cache()
 
@@ -318,7 +318,7 @@ def test_few_shot_skipped_when_similarity_below_threshold(tmp_path: Path) -> Non
 
 def test_few_shot_returned_when_above_threshold(tmp_path: Path) -> None:
     """Few-shot examples are returned when score meets min_score."""
-    from re_agent.agents.few_shot_builder import FewShotBuilder
+    from re_agent.reverse.agents.few_shot_builder import FewShotBuilder
 
     FewShotBuilder.clear_cache()
 

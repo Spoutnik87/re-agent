@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from re_agent.agents.loop import run_fix_loop
-from re_agent.backend.stub import StubBackend
-from re_agent.core.models import AsmResult, DecompileResult, FunctionTarget, Verdict
 from re_agent.llm.protocol import Message
+from re_agent.reverse.agents.loop import run_fix_loop
+from re_agent.reverse.backend.stub import StubBackend
+from re_agent.reverse.core.models import AsmResult, DecompileResult, FunctionTarget, Verdict
 
 
 class MockLLM:
@@ -375,21 +375,28 @@ def test_optimize_loop_with_objective_verifier() -> None:
     assert result.objective_verdict.verdict == Verdict.PASS
 
 
-def test_loop_respects_profile_max_rounds() -> None:
-    """run_fix_loop with a leaf profile should stop after 1 round even if checker fails."""
-    from re_agent.core.models import PipelineProfile
+def test_loop_cli_can_raise_above_profile_max_rounds() -> None:
+    """CLI/explicit max_rounds wins when higher than profile — effective = max(profile, cli)."""
+    from re_agent.reverse.core.models import PipelineProfile
 
     target = FunctionTarget(address="0x100", class_name="C", function_name="f")
     backend = StubBackend()
 
-    reverser_resp = "```cpp\nvoid C::f() {}\n```\nREVERSED_FUNCTION: C::f (0x100)"
-    # Checker always fails
+    # Each round returns unique code so the "code unchanged" check doesn't break early
+    reverser_responses = [
+        "```cpp\nvoid C::f() { call0(); }\n```\nREVERSED_FUNCTION: C::f (0x100)",
+        "```cpp\nvoid C::f() { call1(); }\n```\nREVERSED_FUNCTION: C::f (0x100)",
+        "```cpp\nvoid C::f() { call2(); }\n```\nREVERSED_FUNCTION: C::f (0x100)",
+        "```cpp\nvoid C::f() { call3(); }\n```\nREVERSED_FUNCTION: C::f (0x100)",
+        "```cpp\nvoid C::f() { call4(); }\n```\nREVERSED_FUNCTION: C::f (0x100)",
+    ]
     fail_resp = "VERDICT: FAIL\nSUMMARY: Issues found\nISSUES:\n- missing logic\nFIX_INSTRUCTIONS:\n- add logic"
 
-    rev_llm = NonConvMockLLM([reverser_resp] * 5)
+    rev_llm = NonConvMockLLM(reverser_responses)
     chk_llm = NonConvMockLLM([fail_resp] * 5)
 
-    leaf_profile = PipelineProfile(
+    # Profile says 1 round; CLI says 4 → effective should be 4
+    low_profile = PipelineProfile(
         max_rounds=1,
         enable_phase1=False,
         inject_source_context=False,
@@ -398,13 +405,68 @@ def test_loop_respects_profile_max_rounds() -> None:
         few_shot_max_examples=0,
     )
 
-    result = run_fix_loop(target, backend, rev_llm, chk_llm, max_rounds=4, profile=leaf_profile)
+    result = run_fix_loop(target, backend, rev_llm, chk_llm, max_rounds=4, profile=low_profile)
 
-    assert result.rounds_used == 1
+    assert result.rounds_used == 4
     assert not result.success
-    # Only 1 reverser call + 1 checker call
-    assert len(rev_llm.send_calls) == 1
-    assert len(chk_llm.send_calls) == 1
+
+
+def test_loop_profile_wins_when_higher_than_cli() -> None:
+    """If profile.max_rounds > CLI max_rounds, profile wins (it sets the ceiling)."""
+    from re_agent.reverse.core.models import PipelineProfile
+
+    target = FunctionTarget(address="0x101", class_name="C", function_name="h")
+    backend = StubBackend()
+
+    reverser_responses = [
+        "```cpp\nvoid C::h() { call0(); }\n```\nREVERSED_FUNCTION: C::h (0x101)",
+        "```cpp\nvoid C::h() { call1(); }\n```\nREVERSED_FUNCTION: C::h (0x101)",
+        "```cpp\nvoid C::h() { call2(); }\n```\nREVERSED_FUNCTION: C::h (0x101)",
+        "```cpp\nvoid C::h() { call3(); }\n```\nREVERSED_FUNCTION: C::h (0x101)",
+        "```cpp\nvoid C::h() { call4(); }\n```\nREVERSED_FUNCTION: C::h (0x101)",
+    ]
+    fail_resp = "VERDICT: FAIL\nSUMMARY: Issues found\nISSUES:\n- missing logic\nFIX_INSTRUCTIONS:\n- add logic"
+
+    rev_llm = NonConvMockLLM(reverser_responses)
+    chk_llm = NonConvMockLLM([fail_resp] * 5)
+
+    # Profile says 4 rounds; CLI says 2 → effective should be 4 (profile wins)
+    high_profile = PipelineProfile(
+        max_rounds=4,
+        enable_phase1=True,
+        inject_source_context=True,
+        inject_few_shot=True,
+        use_objective_verifier=True,
+        few_shot_max_examples=2,
+    )
+
+    result = run_fix_loop(target, backend, rev_llm, chk_llm, max_rounds=2, profile=high_profile)
+
+    assert result.rounds_used == 4
+    assert not result.success
+
+
+def test_loop_no_profile_uses_cli_value_directly() -> None:
+    """Without a profile, max_rounds from the caller is used unchanged."""
+    target = FunctionTarget(address="0x102", class_name="C", function_name="i")
+    backend = StubBackend()
+
+    reverser_responses = [
+        "```cpp\nvoid C::i() { call0(); }\n```\nREVERSED_FUNCTION: C::i (0x102)",
+        "```cpp\nvoid C::i() { call1(); }\n```\nREVERSED_FUNCTION: C::i (0x102)",
+        "```cpp\nvoid C::i() { call2(); }\n```\nREVERSED_FUNCTION: C::i (0x102)",
+        "```cpp\nvoid C::i() { call3(); }\n```\nREVERSED_FUNCTION: C::i (0x102)",
+        "```cpp\nvoid C::i() { call4(); }\n```\nREVERSED_FUNCTION: C::i (0x102)",
+    ]
+    fail_resp = "VERDICT: FAIL\nSUMMARY: Issues found\nISSUES:\n- missing logic\nFIX_INSTRUCTIONS:\n- add logic"
+
+    rev_llm = NonConvMockLLM(reverser_responses)
+    chk_llm = NonConvMockLLM([fail_resp] * 5)
+
+    result = run_fix_loop(target, backend, rev_llm, chk_llm, max_rounds=3, profile=None)
+
+    assert result.rounds_used == 3
+    assert not result.success
 
 
 def test_loop_breaks_when_code_unchanged_between_rounds() -> None:
@@ -431,7 +493,7 @@ def test_loop_breaks_when_code_unchanged_between_rounds() -> None:
 
 def test_loop_profile_disables_objective_verifier() -> None:
     """run_fix_loop with use_objective_verifier=False should not run structural checks."""
-    from re_agent.core.models import PipelineProfile
+    from re_agent.reverse.core.models import PipelineProfile
 
     target = FunctionTarget(address="0x100", class_name="C", function_name="f")
     backend = StubBackend()

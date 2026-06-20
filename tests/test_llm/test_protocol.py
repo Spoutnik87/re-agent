@@ -16,6 +16,11 @@ def test_message_creation() -> None:
 class MockProvider:
     """Mock LLM provider for testing."""
 
+    total_cache_hit_tokens: int = 0
+    total_cache_miss_tokens: int = 0
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+
     def __init__(self, responses: list[str] | None = None) -> None:
         self._responses = responses or ["Mock response"]
         self._call_count = 0

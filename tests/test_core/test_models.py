@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from re_agent.core.models import (
+from re_agent.reverse.core.models import (
     CheckerVerdict,
     Finding,
     FunctionTarget,
