@@ -529,7 +529,7 @@ def _stitch(split: SplitResult, reversed_parts: list[str]) -> str:
         return ""
     if not _stitch_is_valid(split, reversed_parts):
         logger.warning(
-            "_stitch: hard-fail - block count mismatch or brace imbalance " "(split=%d blocks, got=%d parts)",
+            "_stitch: hard-fail - block count mismatch or brace imbalance (split=%d blocks, got=%d parts)",
             split.num_blocks,
             len(cleaned),
         )

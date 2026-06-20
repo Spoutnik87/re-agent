@@ -25,7 +25,7 @@ class _CountingProvider:
     def send(self, messages: list[Message], **kwargs: Any) -> str:
         self.total_calls += 1
         self.total_prompt_tokens += self._per_call
-        return "VERDICT: FAIL\nSUMMARY: bad\nISSUES:\n- x\n" "FIX_INSTRUCTIONS:\n- fix it\n"
+        return "VERDICT: FAIL\nSUMMARY: bad\nISSUES:\n- x\nFIX_INSTRUCTIONS:\n- fix it\n"
 
     def new_conversation(self, system: str) -> str:
         raise NotImplementedError
