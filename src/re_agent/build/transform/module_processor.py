@@ -9,7 +9,10 @@ from re_agent.build.state.cache import TransformCache
 from re_agent.build.state.resume import load_state, save_state
 from re_agent.build.transform.context_builder import build_context
 from re_agent.build.transform.llm_client import LLMClient
-from re_agent.build.transform.subunit_processor import process_subunit
+from re_agent.build.transform.subunit_processor import (
+    _render_system_prompt,
+    process_subunit,
+)
 
 _FILE_MARKER_RE = re.compile(r"^// FILE: (.+)$", re.MULTILINE)
 
@@ -67,12 +70,18 @@ def process_modules(cfg: Any) -> None:
                 }
             )
 
+            # Compute prompt_hash from system prompt to detect prompt edits
+            system_prompt = _render_system_prompt(cfg, module_name)
+            prompt_hash = TransformCache.hash_prompt(system_prompt)
+
             context = build_context(
                 subunit,
                 module_functions,
                 Path(cfg.input.decompiled_dir),
                 cfg.optimization.context_window,
                 cache,
+                prompt_hash=prompt_hash,
+                model=cfg.llm.model,
             )
 
             results = process_subunit(context, module_name, llm, cfg, cache)
@@ -84,12 +93,21 @@ def process_modules(cfg: Any) -> None:
                     output_path.write_text(r["output_file"], encoding="utf-8")
 
                 if cache is not None:
+                    # Look up the real decompiled source for this address
+                    addr = r["function"]
+                    source_for_addr = ""
+                    for func in context.get("functions_to_transform", []):
+                        if func["address"] == addr:
+                            source_for_addr = func["code"]
+                            break
                     cache.set(
-                        r["function"],
-                        "",
+                        addr,
+                        source_for_addr,
                         r.get("output_file", ""),
                         r.get("compiles", False),
                         0,
+                        prompt_hash=prompt_hash,
+                        model=cfg.llm.model,
                     )
 
             all_results.extend(results)

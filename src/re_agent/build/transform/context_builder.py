@@ -42,6 +42,8 @@ def build_context(
     decompiled_dir: Path,
     context_window: int,
     cache: Any,
+    prompt_hash: str = "",
+    model: str = "",
 ) -> dict[str, Any]:
     if not subunit:
         return {"functions_to_transform": [], "neighbour_context": [], "cached_count": 0}
@@ -53,7 +55,7 @@ def build_context(
 
     for addr in subunit:
         code = _read_function_source(decompiled_dir, addr)
-        if cache is not None and cache.has(addr, code):
+        if cache is not None and cache.has(addr, code, prompt_hash=prompt_hash, model=model):
             cached_count += 1
             continue
         functions_to_transform.append({"address": addr, "code": code})
