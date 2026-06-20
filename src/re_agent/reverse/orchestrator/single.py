@@ -142,14 +142,20 @@ def reverse_single(
                             objective_control_flow_tolerance=config.orchestrator.objective_control_flow_tolerance,
                             max_tokens_per_function=config.orchestrator.max_tokens_per_function,
                             profile=pipeline_profile,
+                            few_shot_min_score=config.orchestrator.few_shot_min_score,
                         )
-                else:
                     # Tier 1: all-flash (fast_mode) — cheap, handles ~80%
-                    block_result = reverse_blocks(**block_kwargs, fast_mode=True)  # type: ignore[arg-type]
-                    if not block_result.success:
-                        # Tier 2: hybrid pro/flash — handles remaining ~20%
-                        logger.info("%s: fast_mode FAIL — escalating to hybrid", target.address)
-                        block_result = reverse_blocks(**block_kwargs, fast_mode=False)  # type: ignore[arg-type]
+                    tier1_result = reverse_blocks(**block_kwargs, fast_mode=True)  # type: ignore[arg-type]
+                    block_result = tier1_result
+                    if not tier1_result.success:
+                        # Tier 2: hybrid pro/flash — reuses tier-1's blocks + var-mapping
+                        logger.info("%s: fast_mode FAIL — escalating to hybrid (reusing tier-1 blocks)", target.address)
+                        block_result = reverse_blocks(
+                            **block_kwargs,  # type: ignore[arg-type]
+                            fast_mode=False,
+                            previous_code=tier1_result.block_code,
+                            hint_var_mapping=tier1_result.var_mapping,
+                        )
 
                 if block_result is not None and block_result.success:
                     logger.info("%s: PASS (rounds=%d)", target.address, block_result.rounds_used)
@@ -204,6 +210,7 @@ def reverse_single(
         enable_phase1=config.orchestrator.enable_phase1,
         max_tokens_per_function=config.orchestrator.max_tokens_per_function,
         profile=pipeline_profile,
+        few_shot_min_score=config.orchestrator.few_shot_min_score,
     )
 
     _write_code(result, target, config, output_dir)

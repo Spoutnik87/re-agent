@@ -45,6 +45,7 @@ def run_fix_loop(
     enable_phase1: bool = True,
     max_tokens_per_function: int = 0,
     profile: PipelineProfile | None = None,
+    few_shot_min_score: int = 0,
 ) -> ReversalResult:
     """Run the reverser->checker->fix loop up to max_rounds.
 
@@ -83,6 +84,7 @@ def run_fix_loop(
         inject_source_context=inject_src_ctx,
         inject_few_shot=inject_few_shot_flag,
         few_shot_max_examples=few_shot_max,
+        few_shot_min_score=few_shot_min_score,
     )
 
     project_desc = project_profile.project_description if project_profile else ""

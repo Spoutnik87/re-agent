@@ -68,6 +68,7 @@ class OrchestratorConfig:
     block_reversal_enabled: bool = True
     block_threshold_lines: int = 100
     block_max_lines: int = 40
+    few_shot_min_score: int = 4
 
 
 @dataclass

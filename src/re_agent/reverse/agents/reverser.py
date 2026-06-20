@@ -43,6 +43,7 @@ class ReverserAgent:
         inject_source_context: bool = True,
         inject_few_shot: bool = True,
         few_shot_max_examples: int = 2,
+        few_shot_min_score: int = 0,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -51,6 +52,7 @@ class ReverserAgent:
         self._inject_source_context = inject_source_context
         self._inject_few_shot = inject_few_shot
         self._few_shot_max_examples = few_shot_max_examples
+        self._few_shot_min_score = few_shot_min_score
         project_context = project_profile.project_context if project_profile else ""
         self._system_prompt = render_template(
             PROMPTS_DIR / "reverser_system.md",
@@ -136,7 +138,11 @@ class ReverserAgent:
             task_prompt += f"\n\n**Existing source context:**\n{source_context}"
 
         if self._inject_few_shot and self._few_shot_builder is not None and self._few_shot_max_examples != 0:
-            examples = self._few_shot_builder.find_similar(decompiled, max_examples=self._few_shot_max_examples)
+            examples = self._few_shot_builder.find_similar(
+                decompiled,
+                max_examples=self._few_shot_max_examples,
+                min_score=self._few_shot_min_score,
+            )
             if examples:
                 task_prompt += "\n\n**Reference examples (similar functions successfully decompiled):**\n"
                 task_prompt += "\n".join(examples)

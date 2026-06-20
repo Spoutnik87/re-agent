@@ -29,11 +29,15 @@ class SourceContextBuilder:
         self.session = session
         self.report_dir = report_dir
         self.max_chars = max_chars
+        self._header_cache: dict[str, str] = {}
+        self._source_root_mtime: float = 0.0
+        self._check_source_root_mtime()
 
     def build(self, target: FunctionTarget) -> str:
+        self._check_source_root_mtime()
         sections: list[str] = []
 
-        header = self._find_class_header(target.class_name)
+        header = self._find_class_header_cached(target.class_name)
         if header:
             sections.append("Class header:\n" + header)
 
@@ -52,6 +56,25 @@ class SourceContextBuilder:
         if len(combined) <= self.max_chars:
             return combined
         return combined[: self.max_chars - 17].rstrip() + "\n\n[truncated]"
+
+    def _check_source_root_mtime(self) -> None:
+        """Track source root mtime; invalidate header cache if it changed."""
+        try:
+            current_mtime = self.source_root.stat().st_mtime
+        except OSError:
+            return
+        if current_mtime != self._source_root_mtime:
+            self._header_cache.clear()
+            self._source_root_mtime = current_mtime
+
+    def _find_class_header_cached(self, class_name: str) -> str:
+        if not class_name:
+            return ""
+        if class_name in self._header_cache:
+            return self._header_cache[class_name]
+        header = self._find_class_header(class_name)
+        self._header_cache[class_name] = header
+        return header
 
     def _find_class_header(self, class_name: str) -> str:
         if not class_name:
