@@ -85,15 +85,6 @@ def _render_task_prompt(module_name: str, subunit_context: dict[str, Any]) -> st
     return _prompt
 
 
-def _build_retry_prompt(output_file: str, err: str) -> str:
-    return (
-        f"The following code failed to compile with GCC:\n\n"
-        f"```cpp\n{output_file}\n```\n\n"
-        f"Compiler error:\n{err}\n\n"
-        f"Fix the code and output it with the same // FILE: marker."
-    )
-
-
 def process_subunit(
     subunit_context: dict[str, Any],
     module_name: str,
@@ -144,7 +135,7 @@ def process_subunit(
                 }
             )
         elif max_retries > 0:
-            retry_files = _retry_with_context(
+            retry_files = _retry_with_conversation(
                 func_files,
                 err,
                 func,
@@ -192,20 +183,20 @@ def process_subunit(
     return results
 
 
-def _retry_with_context(
+def _retry_with_conversation(
     func_files: list[dict[str, str]],
     err: str,
     func: dict[str, Any],
     system: str,
-    user: str,
+    original_user: str,
     llm: LLMProvider,
     max_retries: int,
     cfg: Any,
-) -> list[dict[str, str]] | None:
-    """Retry fixing compile errors with conversation continuity.
+) -> list[dict[str, str]]:
+    """Retry fixing compile errors using multi-turn conversation.
 
-    Sends original system + original task + model's prior output + error.
-    Uses multi-turn conversation; returns updated files or None.
+    Sends: original system + original task + model's prior output + error.
+    Iterates up to max_retries times. Returns the last file set (fixed or not).
     """
     current_files = func_files
     cpp_file = next((f for f in current_files if f["path"].endswith(".cpp")), current_files[0])
@@ -220,7 +211,7 @@ def _retry_with_context(
         )
         retry_messages = [
             Message(role="system", content=system),
-            Message(role="user", content=user),
+            Message(role="user", content=original_user),
             Message(role="assistant", content=prior_output),
             Message(role="user", content=retry_prompt),
         ]
@@ -231,5 +222,5 @@ def _retry_with_context(
             cpp_file = next((f for f in current_files if f["path"].endswith(".cpp")), current_files[0])
         new_compiles, err = compile_check(cpp_file["content"], cfg)
         if new_compiles:
-            return current_files
-    return current_files if current_files != func_files else None
+            break
+    return current_files

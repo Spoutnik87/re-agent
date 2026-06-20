@@ -134,3 +134,49 @@ def test_process_subunit_uses_shared_provider_protocol(monkeypatch) -> None:
     assert len(results) == 1
     assert results[0]["compiles"] is True
     assert provider.total_calls == 1
+
+
+def test_retry_loop_iterates_max_compile_retries_times(monkeypatch) -> None:
+    """The retry must loop max_compile_retries times, not just once."""
+    call_count = [0]
+
+    def _flaky_compile(code: str, cfg: Any) -> tuple[bool, str]:
+        call_count[0] += 1
+        return (call_count[0] >= 3, "error" if call_count[0] < 3 else "")
+
+    response = "// FILE: src/mod/Class.cpp\nvoid f() {}\n"
+    provider = _FakeProvider(response)
+
+    class _Cfg:
+        class output:
+            language = "C++"
+            standard = "c++23"
+
+        class project:
+            description = ""
+
+            class conventions:
+                class naming:
+                    classes = "PascalCase"
+                    functions = "camelCase"
+                    globals = "snake_case"
+
+                includes_rule = ""
+                max_function_lines = 200
+
+        class validation:
+            max_compile_retries = 3
+
+    import re_agent.build.transform.subunit_processor as sp
+
+    monkeypatch.setattr(sp, "compile_check", _flaky_compile)
+    monkeypatch.setattr(sp, "_render_system_prompt", lambda cfg, mn: "system")
+    monkeypatch.setattr(sp, "_render_task_prompt", lambda mn, ctx: "task")
+
+    ctx = {
+        "functions_to_transform": [{"address": "0x1000", "code": "void f() {}", "name": "f"}],
+        "neighbour_context": [],
+    }
+    _results = process_subunit(ctx, "mod", provider, _Cfg(), cache=None)
+    assert provider.total_calls <= 4
+    assert provider.total_calls >= 2

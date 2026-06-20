@@ -162,7 +162,7 @@ class ValidationConfig:
     compile_per_function: bool = True
     compile_per_module: bool = True
     compile_final_project: bool = True
-    max_compile_retries: int = 1
+    max_compile_retries: int = 2
 
 
 @dataclass
