@@ -45,6 +45,8 @@ class ClaudeProvider:
         self.total_prompt_tokens: int = 0
         self.total_completion_tokens: int = 0
         self.total_calls: int = 0
+        self.total_cache_hit_tokens: int = 0
+        self.total_cache_miss_tokens: int = 0
 
     # -- LLMProvider interface ------------------------------------------------
 
