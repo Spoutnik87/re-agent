@@ -43,6 +43,7 @@ def run_fix_loop(
     objective_control_flow_tolerance: int = 2,
     optimize: bool = False,
     enable_phase1: bool = True,
+    max_tokens_per_function: int = 0,
     profile: PipelineProfile | None = None,
 ) -> ReversalResult:
     """Run the reverser->checker->fix loop up to max_rounds.
@@ -103,6 +104,27 @@ def run_fix_loop(
 
     for round_num in range(1, effective_max_rounds + 1):
         timestamp = time.strftime("%Y%m%d-%H%M%S")
+
+        if max_tokens_per_function > 0:
+            used = getattr(reverser_llm, "total_prompt_tokens", 0) + getattr(reverser_llm, "total_completion_tokens", 0)
+            if used > max_tokens_per_function:
+                logger.warning(
+                    "%s: token budget %d exceeded (%d used), aborting fix loop",
+                    target.address,
+                    max_tokens_per_function,
+                    used,
+                )
+                cleanup_loop(reverser, checker)
+                return ReversalResult(
+                    target=target,
+                    code=code,
+                    checker_verdict=last_verdict,
+                    objective_verdict=last_objective_verdict,
+                    parity_status=None,
+                    parity_findings=[],
+                    rounds_used=round_num - 1,
+                    success=False,
+                )
 
         # Reverse (or fix)
         if round_num == 1:

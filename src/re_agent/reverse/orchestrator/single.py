@@ -102,6 +102,7 @@ def reverse_single(
                     objective_call_count_tolerance=config.orchestrator.objective_call_count_tolerance,
                     objective_control_flow_tolerance=config.orchestrator.objective_control_flow_tolerance,
                     project_description=config.project_profile.project_description,
+                    max_tokens_per_function=config.orchestrator.max_tokens_per_function,
                 )
 
                 # Strategy by size:
@@ -139,6 +140,7 @@ def reverse_single(
                             objective_verifier_enabled=config.orchestrator.objective_verifier_enabled,
                             objective_call_count_tolerance=config.orchestrator.objective_call_count_tolerance,
                             objective_control_flow_tolerance=config.orchestrator.objective_control_flow_tolerance,
+                            max_tokens_per_function=config.orchestrator.max_tokens_per_function,
                             profile=pipeline_profile,
                         )
                 else:
@@ -200,6 +202,7 @@ def reverse_single(
         objective_control_flow_tolerance=config.orchestrator.objective_control_flow_tolerance,
         optimize=config.orchestrator.optimize,
         enable_phase1=config.orchestrator.enable_phase1,
+        max_tokens_per_function=config.orchestrator.max_tokens_per_function,
         profile=pipeline_profile,
     )
 

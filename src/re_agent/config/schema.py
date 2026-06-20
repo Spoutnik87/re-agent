@@ -60,6 +60,8 @@ class OrchestratorConfig:
     enable_phase1: bool = True
     max_review_rounds: int = 4
     max_functions_per_class: int = 10
+    max_tokens_per_function: int = 200_000
+    max_tokens_per_class: int = 2_000_000
     objective_verifier_enabled: bool = True
     objective_call_count_tolerance: int = 3
     objective_control_flow_tolerance: int = 2

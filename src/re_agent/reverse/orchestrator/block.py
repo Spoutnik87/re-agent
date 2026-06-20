@@ -61,6 +61,7 @@ def reverse_blocks(
     skip_checker: bool = False,
     skip_var_mapping: bool = False,
     project_description: str = "",
+    max_tokens_per_function: int = 0,
 ) -> ReversalResult:
     """Reverse a function using block-level decomposition.
 
@@ -76,6 +77,17 @@ def reverse_blocks(
     decompile_result = backend.decompile(target.address)
     decompiled = strip_ghidra_noise(decompile_result.raw_output)
     line_count = decompiled_line_count(decompiled)
+
+    if max_tokens_per_function > 0:
+        used = getattr(llm, "total_prompt_tokens", 0) + getattr(llm, "total_completion_tokens", 0)
+        if used > max_tokens_per_function:
+            logger.warning(
+                "%s: token budget %d exceeded (%d used), aborting block reversal",
+                target.address,
+                max_tokens_per_function,
+                used,
+            )
+            return _empty_result(target)
 
     # Clear block cache between functions to avoid cross-function contamination
     clear_block_cache()
