@@ -12,7 +12,7 @@ class LLMConfig:
     block_model: str | None = None
     api_key: str | None = None
     base_url: str | None = None
-    max_tokens: int = 4096
+    max_tokens: int = 65536
     temperature: float = 0.0
     timeout_s: int = 1800
 
