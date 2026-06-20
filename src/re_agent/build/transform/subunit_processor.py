@@ -105,6 +105,39 @@ def process_subunit(
     max_retries = getattr(cfg.validation, "max_compile_retries", 0)
     total_funcs = len(functions_to_transform)
 
+    # First pass: compile-check all functions, collect failures
+    failed_funcs: list[dict[str, Any]] = []
+    for func in functions_to_transform:
+        func_files = _match_files_to_function(parsed_files, func, total_funcs)
+        if not func_files:
+            continue
+        cpp_file = next((f for f in func_files if f["path"].endswith(".cpp")), func_files[0])
+        compiles, err = compile_check(cpp_file["content"], cfg)
+        if not compiles:
+            failed_funcs.append({"func": func, "files": func_files, "err": err})
+
+    # Subunit-level retry: re-send whole subunit with all errors in one call
+    if failed_funcs and max_retries > 0:
+        error_annotations = "\n\n".join(
+            f"Function {f['func']['address']} failed to compile:\n{f['err']}" for f in failed_funcs
+        )
+        retry_prompt = (
+            "The following functions failed to compile. Fix ALL of them and "
+            "re-output with // FILE: markers.\n\n" + error_annotations
+        )
+        retry_messages = [
+            Message(role="system", content=system),
+            Message(role="user", content=user),
+            Message(role="assistant", content=response),
+            Message(role="user", content=retry_prompt),
+        ]
+        retry_response = llm.send(retry_messages)
+        retry_files = _parse_llm_response(retry_response)
+        if retry_files:
+            parsed_files = retry_files
+            max_retries = max(0, max_retries - 1)
+
+    # Per-function result building (with per-function retry for still-failing)
     results: list[dict[str, Any]] = []
     for func in functions_to_transform:
         addr = func["address"]

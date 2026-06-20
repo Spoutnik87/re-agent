@@ -180,3 +180,52 @@ def test_retry_loop_iterates_max_compile_retries_times(monkeypatch) -> None:
     _results = process_subunit(ctx, "mod", provider, _Cfg(), cache=None)
     assert provider.total_calls <= 4
     assert provider.total_calls >= 2
+
+
+def test_per_subunit_retry_re_sends_whole_subunit(monkeypatch) -> None:
+    """When multiple functions fail compile, retry the whole subunit in one call
+    with per-function error annotations, not one call per function."""
+    response = "// FILE: src/mod/A.cpp\nvoid a() {}\n" "\n// FILE: src/mod/B.cpp\nvoid b() {}\n"
+    provider = _FakeProvider(response)
+
+    compile_calls = [0]
+
+    def _compile(code: str, cfg: Any) -> tuple[bool, str]:
+        compile_calls[0] += 1
+        return (compile_calls[0] > 2, "error" if compile_calls[0] <= 2 else "")
+
+    class _Cfg:
+        class output:
+            language = "C++"
+            standard = "c++23"
+
+        class project:
+            description = ""
+
+            class conventions:
+                class naming:
+                    classes = "PascalCase"
+                    functions = "camelCase"
+                    globals = "snake_case"
+
+                includes_rule = ""
+                max_function_lines = 200
+
+        class validation:
+            max_compile_retries = 2
+
+    import re_agent.build.transform.subunit_processor as sp
+
+    monkeypatch.setattr(sp, "compile_check", _compile)
+    monkeypatch.setattr(sp, "_render_system_prompt", lambda cfg, mn: "system")
+    monkeypatch.setattr(sp, "_render_task_prompt", lambda mn, ctx: "task")
+
+    ctx = {
+        "functions_to_transform": [
+            {"address": "0x1000", "code": "void a() {}", "name": "a"},
+            {"address": "0x1001", "code": "void b() {}", "name": "b"},
+        ],
+        "neighbour_context": [],
+    }
+    _ = process_subunit(ctx, "mod", provider, _Cfg(), cache=None)
+    assert provider.total_calls <= 3, f"Expected <=3 LLM calls, got {provider.total_calls}"
