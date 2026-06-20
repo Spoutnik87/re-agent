@@ -112,9 +112,22 @@ class CheckerAgent:
                 if item and item.lower() != "none":
                     fix_instructions.append(item)
 
+        ghidra_var_re = re.compile(
+            r"\b(?:param_\d+|local_[0-9a-fA-F]+|uVar\d+|iVar\d+|bVar\d+|cVar\d+|sVar\d+|unaff_\w+)\b"
+        )
+        rename_re = re.compile(
+            r"\b(?:rename|renamed|should be (?:named|called)|undefined|undeclared|not declared)\b",
+            re.I,
+        )
+        combined_text = " ".join(issues)
+        naming_explicit = bool(rename_re.search(combined_text) and ghidra_var_re.search(combined_text))
+        affected_vars = list(set(ghidra_var_re.findall(combined_text)))
+
         return CheckerVerdict(
             verdict=verdict,
             summary=summary,
             issues=issues,
             fix_instructions=fix_instructions,
+            naming_issues_explicit=naming_explicit,
+            affected_variables=affected_vars,
         )

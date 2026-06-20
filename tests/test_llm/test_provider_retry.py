@@ -10,6 +10,9 @@ from re_agent.llm.protocol import LLMProvider, Message
 class FailingProvider:
     """Provider that fails N times then succeeds, for testing retry logic."""
 
+    total_cache_hit_tokens: int = 0
+    total_cache_miss_tokens: int = 0
+
     def __init__(self, fail_count: int = 2, success_response: str = "OK") -> None:
         self._fail_count = fail_count
         self._attempt = 0

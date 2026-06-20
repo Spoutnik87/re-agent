@@ -7,6 +7,7 @@ If FAIL: re-run with pro for reasoning (checker, var mapping, large blocks).
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from re_agent.llm.protocol import LLMProvider
 from re_agent.reverse.agents.block_reverser import BlockReverserAgent, clear_block_cache, generate_variable_mapping
@@ -61,6 +62,8 @@ def reverse_blocks(
     skip_checker: bool = False,
     skip_var_mapping: bool = False,
     project_description: str = "",
+    previous_code: dict[str, str] | None = None,
+    hint_var_mapping: str | None = None,
     max_tokens_per_function: int = 0,
 ) -> ReversalResult:
     """Reverse a function using block-level decomposition.
@@ -193,14 +196,17 @@ def reverse_blocks(
     # Flash model cannot reliably infer variable names/types from decompile.
     var_mapping = ""
     if not skip_var_mapping:
-        var_mapping = generate_variable_mapping(
-            decompiled=decompiled,
-            class_name=target.class_name,
-            function_name=target.function_name,
-            address=target.address,
-            llm=llm,
-            project_description=project_description,
-        )
+        if hint_var_mapping is not None:
+            var_mapping = hint_var_mapping
+        else:
+            var_mapping = generate_variable_mapping(
+                decompiled=decompiled,
+                class_name=target.class_name,
+                function_name=target.function_name,
+                address=target.address,
+                llm=llm,
+                project_description=project_description,
+            )
 
     block_agent_fast = BlockReverserAgent(_block_fast, project_description=project_description)
     _pro_desc = project_description
@@ -222,6 +228,7 @@ def reverse_blocks(
         only_block_ids: set[str] | None = None,
         previous_code: dict[str, str] | None = None,
         targeted_issues: dict[str, str] | None = None,
+        reuse_all_previous: bool = False,
     ) -> tuple[list[str], dict[str, str]]:
         reversed_blocks: dict[str, str] = {}
         all_code: list[str] = []
@@ -230,16 +237,16 @@ def reverse_blocks(
             if agent_pro is not None:
                 agent_pro.reset_conversation()
         for block in split.blocks:
-            if (
-                only_block_ids is not None
-                and block.id not in only_block_ids
-                and previous_code
-                and block.id in previous_code
-            ):
-                bc = previous_code[block.id]
-                reversed_blocks[block.id] = bc
-                all_code.append(bc)
-                continue
+            prev = previous_code.get(block.id, "") if previous_code else ""
+            if prev and not _has_parse_error(prev):
+                if reuse_all_previous:
+                    reversed_blocks[block.id] = prev
+                    all_code.append(prev)
+                    continue
+                if only_block_ids is not None and block.id not in only_block_ids:
+                    reversed_blocks[block.id] = prev
+                    all_code.append(prev)
+                    continue
             bl = len(block.decompiled_text.splitlines())
             if (not fast) and (bl > max_block_lines) and agent_pro is not None:
                 agent: BlockReverserAgent = agent_pro
@@ -276,6 +283,8 @@ def reverse_blocks(
         var_context,
         decompiled,
         reset_conv=True,
+        previous_code=previous_code,
+        reuse_all_previous=previous_code is not None,
     )
     full_code = _stitch(split, all_code)
     if not full_code:
@@ -307,6 +316,8 @@ def reverse_blocks(
             parity_findings=[],
             rounds_used=1,
             success=ok,
+            block_code=dict(reversed_blocks) if reversed_blocks else None,
+            var_mapping=var_mapping,
         )
 
     checker = CheckerAgent(_reasoning, backend, project_description=project_description)
@@ -341,7 +352,7 @@ def reverse_blocks(
     while not StagnationTracker.is_pass(cv, ov) and fr < max_fix_rounds:
         fr += 1
         # Recompute var_mapping if checker flagged naming/type issues
-        if cv and _has_naming_issues(cv.issues) and not skip_var_mapping:
+        if cv and _should_regenerate_varmap(cv) and not skip_var_mapping:
             logger.info("%s: checker flagged naming issues — regenerating var_mapping", target.address)
             var_mapping = generate_variable_mapping(
                 decompiled=decompiled,
@@ -352,6 +363,8 @@ def reverse_blocks(
                 project_description=project_description,
             )
         affected = _find_affected_blocks(cv.issues, split) if cv else None
+        if affected is None and cv:
+            affected = _select_fallback_blocks(split.blocks, reversed_blocks)
         # Build per-block targeted issue context for surgical fixes
         targeted_issues: dict[str, str] = {}
         if cv and affected:
@@ -407,11 +420,17 @@ def reverse_blocks(
         parity_findings=[],
         rounds_used=1 + fr,
         success=ok,
+        block_code=dict(reversed_blocks) if reversed_blocks else None,
+        var_mapping=var_mapping,
     )
 
 
 def _has_naming_issues(issues: list[str]) -> bool:
-    """Check if any checker issue is related to variable naming or types."""
+    """Check if any checker issue is related to variable naming or types.
+
+    Deprecated: use _should_regenerate_varmap instead, which gates on
+    explicit rename/undefined requests from the checker.
+    """
     naming_keywords = (
         "variable",
         "name",
@@ -426,6 +445,16 @@ def _has_naming_issues(issues: list[str]) -> bool:
     )
     combined = " ".join(issues).lower()
     return any(kw in combined for kw in naming_keywords)
+
+
+def _should_regenerate_varmap(cv: CheckerVerdict) -> bool:
+    """Return True only when the checker explicitly requests variable renaming.
+
+    Replaces the broad _has_naming_issues keyword match, which fired on almost
+    any issue containing 'type'/'name'/'variable' and triggered a full-decompile
+    pro call unnecessarily.
+    """
+    return bool(cv.issues and cv.naming_issues_explicit)
 
 
 def _find_affected_blocks(issues: list[str], split: SplitResult) -> set[str] | None:
@@ -444,27 +473,68 @@ def _find_affected_blocks(issues: list[str], split: SplitResult) -> set[str] | N
     return affected if affected else None
 
 
+def _has_parse_error(code: str) -> bool:
+    """Heuristic: detect obviously broken block output."""
+    if not code.strip():
+        return True
+    opens = code.count("{")
+    closes = code.count("}")
+    return abs(opens - closes) > 1
+
+
+def _select_fallback_blocks(
+    blocks: list[Any],
+    previous_code: dict[str, str] | None,
+) -> set[str]:
+    """Select blocks to re-reverse when _find_affected_blocks returns None.
+
+    Strategy:
+    1. If any previous output has parse errors (empty, brace imbalance),
+       re-reverse only those.
+    2. Otherwise, re-reverse the largest 2 blocks (complex logic is most
+       likely at fault).
+    Never blanket re-reverse all blocks.
+    """
+    if previous_code:
+        errored = {b.id for b in blocks if _has_parse_error(previous_code.get(b.id, ""))}
+        if errored:
+            return errored
+    sorted_blocks = sorted(blocks, key=lambda b: len(b.decompiled_text.splitlines()), reverse=True)
+    return {b.id for b in sorted_blocks[:2]}
+
+
+def _stitch_is_valid(split: SplitResult, reversed_parts: list[str]) -> bool:
+    """Return True if the stitched output passes structural validation.
+
+    Hard-fail thresholds:
+    - brace imbalance > 2
+    - block count mismatch > 1
+    """
+    cleaned = [p.strip() for p in reversed_parts if p.strip()]
+    if not cleaned:
+        return False
+    if abs(len(cleaned) - split.num_blocks) > 1:
+        return False
+    body = "\n".join(cleaned)
+    opens = body.count("{")
+    closes = body.count("}")
+    return abs(opens - closes) <= 2
+
+
 def _stitch(split: SplitResult, reversed_parts: list[str]) -> str:
     if not reversed_parts:
         return ""
     cleaned = [p.strip() for p in reversed_parts if p.strip()]
     if not cleaned:
         return ""
-    if len(cleaned) != split.num_blocks:
+    if not _stitch_is_valid(split, reversed_parts):
         logger.warning(
-            "_stitch: block count mismatch — split has %d blocks but got %d reversed parts",
+            "_stitch: hard-fail - block count mismatch or brace imbalance " "(split=%d blocks, got=%d parts)",
             split.num_blocks,
             len(cleaned),
         )
+        return ""
     body = "\n".join(cleaned)
-    opens = body.count("{")
-    closes = body.count("}")
-    if opens != closes:
-        logger.warning(
-            "_stitch: unbalanced braces — %d opens vs %d closes",
-            opens,
-            closes,
-        )
     if split.signature:
         return f"{split.signature} {{\n{body}\n}}"
     return f"{{\n{body}\n}}"

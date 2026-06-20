@@ -62,6 +62,8 @@ class CheckerVerdict:
     summary: str
     issues: list[str] = field(default_factory=list)
     fix_instructions: list[str] = field(default_factory=list)
+    naming_issues_explicit: bool = False
+    affected_variables: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -85,6 +87,8 @@ class ReversalResult:
     parity_findings: list[Finding] = field(default_factory=list)
     rounds_used: int = 0
     success: bool = False
+    block_code: dict[str, str] | None = None
+    var_mapping: str | None = None
 
 
 # ---------------------------------------------------------------------------
