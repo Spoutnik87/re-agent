@@ -87,7 +87,12 @@ class ClaudeProvider:
         for attempt in range(_RETRY_COUNT):
             try:
                 return fn(**kwargs)
-            except Exception:
+            except (
+                anthropic.RateLimitError,
+                anthropic.APIConnectionError,
+                anthropic.InternalServerError,
+                anthropic.APITimeoutError,
+            ):
                 if attempt == _RETRY_COUNT - 1:
                     raise
                 _logger.warning("Claude API call attempt %d failed, retrying in %.1fs", attempt + 1, delay)
