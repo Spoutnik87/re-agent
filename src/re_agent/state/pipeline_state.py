@@ -19,6 +19,7 @@ class PipelineState:
     def __init__(self, path: str | Path = "pipeline-state.json") -> None:
         self.path = Path(path)
         self._data: dict[str, Any] = self._load()
+        self._dirty = False
 
     def _load(self) -> dict[str, Any]:
         if self.path.exists():
@@ -37,6 +38,7 @@ class PipelineState:
         }
 
     def _save(self) -> None:
+        self._dirty = False
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._data["last_pipeline_run"] = datetime.now(timezone.utc).isoformat()
         self.path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
@@ -57,7 +59,7 @@ class PipelineState:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             **kwargs,
         }
-        self._save()
+        self._dirty = True
 
     def update_build(self, status: str, **kwargs: Any) -> None:
         if status not in self._VALID_STATUSES:
@@ -69,7 +71,12 @@ class PipelineState:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             **kwargs,
         }
-        self._save()
+        self._dirty = True
+
+    def flush(self) -> None:
+        """Persist in-memory state to disk if dirty."""
+        if self._dirty:
+            self._save()
 
     def is_reverse_completed(self) -> bool:
         return self.get_reverse_status() == "completed"

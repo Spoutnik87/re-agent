@@ -14,21 +14,21 @@ from re_agent.build.transform.subunit_processor import (
 from re_agent.llm.registry import create_provider
 
 
-def process_modules(cfg: Any) -> None:
-    modules_path = Path("modules.json")
+def process_modules(cfg: Any, llm_cfg: Any) -> None:
+    modules_path = Path(cfg.output.work_dir) / "modules.json"
     if not modules_path.exists():
         raise FileNotFoundError("modules.json not found. Run 'cr-agent analyze' first.")
 
     with open(modules_path, encoding="utf-8") as f:
         modules_data = json.load(f)
 
-    llm = create_provider(cfg.llm)
+    llm = create_provider(llm_cfg)
 
     cache = None
     if cfg.optimization.cache_enabled:
         cache = TransformCache(cfg.optimization.cache_path)
 
-    temp_dir = Path("temp_transformed")
+    temp_dir = Path(cfg.output.work_dir) / "temp_transformed"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     completed_modules: list[str] = []
@@ -118,7 +118,7 @@ def process_modules(cfg: Any) -> None:
                         r.get("compiles", False),
                         0,
                         prompt_hash=prompt_hash,
-                        model=cfg.llm.model,
+                        model=llm_cfg.model,
                     )
 
             all_results.extend(results)
@@ -153,5 +153,5 @@ def process_modules(cfg: Any) -> None:
         },
     }
 
-    with open("cr-agent-report.json", "w", encoding="utf-8") as f:
+    with open(Path(cfg.output.work_dir) / "cr-agent-report.json", "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)

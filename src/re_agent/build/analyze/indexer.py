@@ -80,7 +80,7 @@ def index_modules(modules_data: dict[str, Any], cfg: Any) -> None:
                 subunit_size,
             )
 
-    with open("modules.json", "w", encoding="utf-8") as f:
+    with open(Path(cfg.output.work_dir) / "modules.json", "w", encoding="utf-8") as f:
         json.dump(modules_data, f, indent=2)
 
     print("Sub-units saved to modules.json")

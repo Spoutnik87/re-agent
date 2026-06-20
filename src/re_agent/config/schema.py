@@ -107,6 +107,7 @@ class BuildOutputConfig:
     compiler: str = "g++"
     compiler_flags: str = "-std=c++23 -c -Wall -Werror"
     target_dir: str = "output/"
+    work_dir: str = "."
 
 
 @dataclass

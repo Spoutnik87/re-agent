@@ -30,14 +30,17 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
             rev_code = cmd_reverse(args)
         except Exception:
             state.update_reverse("failed")
+            state.flush()
             print("Reverse phase failed with exception. Pipeline stopped.", file=sys.stderr)
             raise
         if rev_code != 0:
             state.update_reverse("failed")
+            state.flush()
             print("Reverse phase failed. Pipeline stopped.", file=sys.stderr)
             return rev_code
 
         state.update_reverse("completed")
+        state.flush()
         print("Reverse phase complete.")
 
     if not build_ok and not args.skip_build:
@@ -51,10 +54,12 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
             build_code = cmd_build(args)
         except Exception:
             state.update_build("failed")
+            state.flush()
             print("Build phase failed with exception. Pipeline stopped.", file=sys.stderr)
             raise
         if build_code != 0:
             state.update_build("failed")
+            state.flush()
             print("Build phase failed. Pipeline stopped.", file=sys.stderr)
             return build_code
 

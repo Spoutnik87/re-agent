@@ -135,7 +135,9 @@ def process_subunit(
         retry_files = _parse_llm_response(retry_response)
         if retry_files:
             parsed_files = retry_files
-            max_retries = max(0, max_retries - 1)
+            max_retries -= 1
+
+    remaining_retries = max_retries
 
     # Per-function result building (with per-function retry for still-failing)
     results: list[dict[str, Any]] = []
@@ -167,7 +169,8 @@ def process_subunit(
                     "verdict": "PASS",
                 }
             )
-        elif max_retries > 0:
+        elif remaining_retries > 0:
+            func_retries = min(1, remaining_retries)
             retry_files = _retry_with_conversation(
                 func_files,
                 err,
@@ -175,9 +178,10 @@ def process_subunit(
                 system,
                 user,
                 llm,
-                max_retries,
+                func_retries,
                 cfg,
             )
+            remaining_retries -= 1
             if retry_files:
                 func_files = retry_files
                 cpp_file = next((f for f in func_files if f["path"].endswith(".cpp")), func_files[0])

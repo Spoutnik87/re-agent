@@ -3,10 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from re_agent.build.validate.compiler import compile_module_check
 
 
-def test_compile_module_check_compiles_files_together(tmp_path: Path) -> None:
+def test_compile_module_check_compiles_files_together(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """compile_module_check must pass all .cpp files to the compiler in one
     invocation so cross-file link errors are caught."""
     file_a = tmp_path / "a.cpp"
@@ -18,8 +20,6 @@ def test_compile_module_check_compiles_files_together(tmp_path: Path) -> None:
     cfg.output.compiler = "g++"
     cfg.output.compiler_flags = "-c -Wall"
 
-    import re_agent.build.validate.compiler as comp_mod
-
     captured_cmd: list = []
 
     def fake_run(cmd, **kwargs):  # type: ignore[no-untyped-def]
@@ -30,12 +30,11 @@ def test_compile_module_check_compiles_files_together(tmp_path: Path) -> None:
         result.stdout = ""
         return result
 
-    original_run = comp_mod.subprocess.run
-    comp_mod.subprocess.run = fake_run
-    try:
-        ok, err = compile_module_check([file_a, file_b], cfg)
-    finally:
-        comp_mod.subprocess.run = original_run
+    import subprocess as comp_subprocess
+
+    monkeypatch.setattr(comp_subprocess, "run", fake_run)
+
+    ok, err = compile_module_check([file_a, file_b], cfg)
 
     assert ok is True
     assert len(captured_cmd) == 1, "expected a single compiler invocation with all files"

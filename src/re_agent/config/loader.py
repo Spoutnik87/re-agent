@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 import os
+import typing
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -99,20 +99,28 @@ def _apply_cli_overrides(raw: dict[str, Any], overrides: dict[str, Any]) -> dict
     return raw
 
 
-def _coerce_field(value: Any, field_type_str: str) -> Any:
+def _coerce_field(value: Any, field_type: Any) -> Any:
     if value is None:
         return value
-    if "int" in field_type_str and not isinstance(value, int):
+    origin = typing.get_origin(field_type)
+    if origin is not None:
+        if origin is list:
+            args = typing.get_args(field_type)
+            if isinstance(value, list) and args:
+                return [_coerce_field(v, args[0]) for v in value]
+            return value
+        return value
+    if field_type is int and not isinstance(value, int):
         try:
             return int(value)
         except (ValueError, TypeError):
             return value
-    if "float" in field_type_str and not isinstance(value, int | float):
+    if field_type is float and not isinstance(value, int | float):
         try:
             return float(value)
         except (ValueError, TypeError):
             return value
-    if "bool" in field_type_str and not isinstance(value, bool):
+    if field_type is bool and not isinstance(value, bool):
         if isinstance(value, str):
             return value.lower() in ("true", "1", "yes")
         return bool(value)
@@ -120,19 +128,17 @@ def _coerce_field(value: Any, field_type_str: str) -> Any:
 
 
 def _build_with_coercion(cls: type[_T], data: dict[str, Any]) -> _T:
-    known = {f.name: f for f in dataclasses.fields(cls)}  # type: ignore[arg-type]
+    hints = typing.get_type_hints(cls)
     filtered: dict[str, Any] = {}
     for k, v in data.items():
-        if k in known:
-            ft = known[k].type
-            type_str = ft if isinstance(ft, str) else getattr(ft, "__name__", str(ft))
-            filtered[k] = _coerce_field(v, type_str)
+        if k in hints:
+            filtered[k] = _coerce_field(v, hints[k])
         else:
             _log.warning(
                 "Unknown config key '%s' in %s (known: %s) — ignored",
                 k,
                 cls.__name__,
-                ", ".join(sorted(known)),
+                ", ".join(sorted(hints)),
             )
     return cls(**filtered)
 

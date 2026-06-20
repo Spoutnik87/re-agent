@@ -1,6 +1,7 @@
 """Cluster functions into modules using Louvain community detection."""
 
 import json
+from pathlib import Path
 from typing import Any
 
 import networkx as nx  # type: ignore[import-untyped]
@@ -81,7 +82,7 @@ def cluster(graph_dict: dict[str, set[str]], cfg: Any) -> dict[str, Any]:
         "metadata": metadata,
     }
 
-    with open("modules.json", "w", encoding="utf-8") as f:
+    with open(Path(cfg.output.work_dir) / "modules.json", "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
 
     print("Modules saved to modules.json")

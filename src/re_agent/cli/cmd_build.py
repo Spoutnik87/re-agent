@@ -12,6 +12,7 @@ from re_agent.state.pipeline_state import PipelineState
 def cmd_build(args: argparse.Namespace) -> int:
     config = load_config(Path(args.config))
     build_cfg = config.build
+    llm_cfg = config.llm
     pipeline_cfg = config.pipeline
 
     state = PipelineState(pipeline_cfg.state_file)
@@ -38,7 +39,7 @@ def cmd_build(args: argparse.Namespace) -> int:
 
         if "transform" in phases:
             print("=== Phase 2/3: Transform (LLM code refinement) ===")
-            process_modules(build_cfg)
+            process_modules(build_cfg, llm_cfg)
             state.update_build("in_progress", phase="transform", modules_completed=[])
 
         if "assemble" in phases:
@@ -47,7 +48,9 @@ def cmd_build(args: argparse.Namespace) -> int:
             state.update_build("completed")
     except Exception:
         state.update_build("failed")
+        state.flush()
         raise
 
+    state.flush()
     print("Build complete.")
     return 0
