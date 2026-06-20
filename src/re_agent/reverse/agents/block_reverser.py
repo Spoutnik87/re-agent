@@ -8,7 +8,6 @@ from pathlib import Path
 
 from re_agent.llm.protocol import LLMProvider, Message
 from re_agent.reverse.agents.block_splitter import Block
-from re_agent.reverse.backend.protocol import REBackend
 from re_agent.reverse.utils.templates import render_template
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -170,66 +169,3 @@ class BlockReverserAgent:
                 continue
             cleaned.append(line)
         return "\n".join(cleaned).strip()
-
-
-class SkeletonGenerator:
-    """Generates a function skeleton (signature + locals + block placeholders)
-    from decompiled code."""
-
-    def __init__(self, llm: LLMProvider, backend: REBackend, project_description: str = "") -> None:
-        self.llm = llm
-        self.backend = backend
-        self._system_prompt = render_template(PROMPTS_DIR / "skeleton_system.md")
-        self.last_prompt: str = ""
-        self.last_response: str = ""
-
-    def generate(
-        self,
-        decompiled: str,
-        class_name: str,
-        function_name: str,
-        address: str,
-    ) -> str:
-        """Generate a skeleton from decompiled code.
-
-        Returns:
-            Skeleton C++ code with ``{ /* TODO */ }`` block placeholders.
-        """
-        structs_text = ""
-        caps = self.backend.capabilities
-        if caps.has_structs and class_name:
-            try:
-                struct = self.backend.get_struct(class_name)
-                if struct:
-                    structs_text = f"{struct.name} (size: {struct.size})\n"
-                    structs_text += "\n".join(
-                        f"  +0x{f.offset:X} {f.type_str} {f.name} (size: {f.size})" for f in struct.fields
-                    )
-            except Exception:
-                structs_text = "Unavailable"
-
-        task_prompt = render_template(
-            PROMPTS_DIR / "skeleton_task.md",
-            class_name=class_name,
-            function_name=function_name,
-            address=address,
-            decompiled=decompiled,
-            structs=structs_text or "None",
-        )
-
-        self.last_prompt = task_prompt
-        messages = [
-            Message(role="system", content=self._system_prompt),
-            Message(role="user", content=task_prompt),
-        ]
-        response = self.llm.send(messages)
-        self.last_response = response
-
-        return self._extract_skeleton(response)
-
-    @staticmethod
-    def _extract_skeleton(response: str) -> str:
-        m = BLOCK_CODE_RE.search(response)
-        if m:
-            return m.group(1).strip()
-        return response.strip()

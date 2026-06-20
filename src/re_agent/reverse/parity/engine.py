@@ -17,6 +17,7 @@ from re_agent.reverse.core.models import (
     ParityStatus,
     SourceMatch,
 )
+from re_agent.reverse.parity.cache import ParityCache
 from re_agent.reverse.parity.rules import (
     apply_semantic_rules,
     read_manual_checks,
@@ -122,37 +123,57 @@ def score_single(
     return status, findings
 
 
-def fetch_ghidra_data(address: str, backend: REBackend) -> GhidraData:
+def fetch_ghidra_data(
+    address: str,
+    backend: REBackend,
+    cache: ParityCache | None = None,
+) -> GhidraData:
     """Fetch and aggregate Ghidra analysis data for a single function address.
 
-    Uses backend capability flags to skip unsupported queries gracefully.
+    When cache is provided, decompile/ASM results are cached per address
+    to avoid re-shelling to Ghidra across parity re-runs.
     """
     data = GhidraData(resolved_address=address)
     caps = backend.capabilities
 
-    # Decompile (always required)
-    try:
-        dec = backend.decompile(address)
+    # Decompile (always required) — check cache first
+    cached_decompile = cache.get("decompile", address) if cache else None
+    if cached_decompile is not None:
+        dec_raw = cached_decompile
         data.decompile_ok = True
-        data.callers = dec.callers
-        data.callees = dec.callees
-        data.decompile_has_nan = "NAN" in dec.decompiled.upper() if dec.decompiled else False
-    except Exception as exc:
-        data.decompile_ok = False
-        data.decompile_error = str(exc)
-
-    # ASM
-    if caps.has_asm:
+    else:
         try:
-            asm = backend.get_asm(address)
-            if asm is not None:
-                data.asm_ok = True
-                data.asm_instruction_count = asm.instruction_count
-                data.asm_call_count = asm.call_count
-                data.asm_has_fp_sensitive = has_fp_asm(asm.instructions)
+            dec = backend.decompile(address)
+            dec_raw = dec.raw_output
+            data.decompile_ok = True
+            data.callers = dec.callers
+            data.callees = dec.callees
+            data.decompile_has_nan = "NAN" in dec.decompiled.upper() if dec.decompiled else False
+            if cache:
+                cache.put("decompile", address, dec_raw)
         except Exception as exc:
-            data.asm_ok = False
-            data.asm_error = str(exc)
+            data.decompile_ok = False
+            data.decompile_error = str(exc)
+            dec_raw = ""
+
+    # ASM — check cache first
+    if caps.has_asm:
+        cached_asm = cache.get("asm", address) if cache else None
+        if cached_asm is not None:
+            data.asm_ok = True
+        else:
+            try:
+                asm = backend.get_asm(address)
+                if asm is not None:
+                    data.asm_ok = True
+                    data.asm_instruction_count = asm.instruction_count
+                    data.asm_call_count = asm.call_count
+                    data.asm_has_fp_sensitive = has_fp_asm(asm.instructions)
+                    if cache:
+                        cache.put("asm", address, asm.instructions)
+            except Exception as exc:
+                data.asm_ok = False
+                data.asm_error = str(exc)
 
     return data
 
@@ -181,6 +202,7 @@ def run_parity(
     """
     profile = config.project_profile
     parity_cfg = config.parity
+    cache = ParityCache(Path(parity_cfg.cache_dir)) if parity_cfg.enabled else None
 
     indexer = SourceIndexer(source_root, profile)
 
@@ -221,7 +243,7 @@ def run_parity(
             ghidra = ghidra_data_map[addr_key]
         elif backend is not None:
             try:
-                ghidra = fetch_ghidra_data(entry.address, backend)
+                ghidra = fetch_ghidra_data(entry.address, backend, cache=cache)
             except Exception:
                 logger.warning("Failed to fetch Ghidra data for %s", entry.address, exc_info=True)
 
