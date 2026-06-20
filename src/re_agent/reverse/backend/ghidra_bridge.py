@@ -30,10 +30,17 @@ class GhidraBridgeBackend:
         timeout_s: Maximum seconds per CLI invocation.
     """
 
+    _DECOMPILE_CACHE_MAX = 256
+
     def __init__(self, cli_path: str = "ghidra", timeout_s: int = 45) -> None:
         self._cli_path = cli_path
         self._timeout_s = timeout_s
         self._caps: BackendCapabilities | None = None
+        self._decompile_cache: dict[str, DecompileResult] = {}
+
+    def clear_cache(self) -> None:
+        """Clear the decompile cache (e.g., between full runs)."""
+        self._decompile_cache.clear()
 
     # -- helpers --------------------------------------------------------------
 
@@ -125,6 +132,10 @@ class GhidraBridgeBackend:
 
     def decompile(self, target: str) -> DecompileResult:
         """Decompile a function by address or symbol name."""
+        # Cache hit — return immediately without shelling out.
+        if target in self._decompile_cache:
+            return self._decompile_cache[target]
+
         raw = self._run("decompile", target)
 
         # Attempt to parse callers/callees from a line like:
@@ -150,7 +161,7 @@ class GhidraBridgeBackend:
             name = stripped.split("(")[0].split()[-1] if "(" in stripped else target
             break
 
-        return DecompileResult(
+        result = DecompileResult(
             address=target,
             name=name,
             signature="",
@@ -159,6 +170,14 @@ class GhidraBridgeBackend:
             callers=callers,
             callees=callees,
         )
+
+        # Cache with simple LRU eviction (dict preserves insertion order in Python 3.10+).
+        if len(self._decompile_cache) >= self._DECOMPILE_CACHE_MAX:
+            oldest = next(iter(self._decompile_cache))
+            del self._decompile_cache[oldest]
+        self._decompile_cache[target] = result
+
+        return result
 
     # -- xrefs ----------------------------------------------------------------
 
