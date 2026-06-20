@@ -164,7 +164,7 @@ def reverse_blocks(
                 cv = CheckerVerdict(
                     verdict=Verdict.PASS, summary="Objective verifier passed", issues=[], fix_instructions=[]
                 )
-            if rec_tracker.update(cv):
+            if rec_tracker.update(cv, ov):
                 logger.info("%s: recursive fix loop stagnated after %d rounds, stopping", target.address, fr)
                 break
 
@@ -406,7 +406,7 @@ def reverse_blocks(
             cv = CheckerVerdict(
                 verdict=Verdict.PASS, summary="Objective verifier passed", issues=[], fix_instructions=[]
             )
-        if blk_tracker.update(cv):
+        if blk_tracker.update(cv, ov):
             logger.info("%s: fix loop stagnated after %d rounds, stopping", target.address, fr)
             break
 

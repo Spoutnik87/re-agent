@@ -235,7 +235,7 @@ def run_fix_loop(
                 rounds_used=round_num,
                 success=True,
             )
-        if tracker.update(verdict):
+        if tracker.update(verdict, objective_verdict):
             logger.info("%s: fix loop stagnated after %d rounds, stopping", target.address, round_num)
             break
 
