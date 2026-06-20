@@ -31,6 +31,13 @@ class CodexCLIProvider:
         self._timeout_s = timeout_s
         self._codex_bin = codex_bin
         self._conversations: dict[str, list[Message]] = {}
+        # Token accounting (approximate — codex exec doesn't return usage stats,
+        # so we track call count and mark tokens as untracked)
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
+        self.total_calls: int = 0
+        self.total_cache_hit_tokens: int = 0
+        self.total_cache_miss_tokens: int = 0
 
     def send(self, messages: list[Message], **kwargs: Any) -> str:
         prompt = self._render_messages(messages)
@@ -39,7 +46,9 @@ class CodexCLIProvider:
         delay = _RETRY_BASE_DELAY
         for attempt in range(_RETRY_COUNT):
             try:
-                return self._run_codex(prompt, model)
+                result = self._run_codex(prompt, model)
+                self.total_calls += 1
+                return result
             except Exception:
                 if attempt == _RETRY_COUNT - 1:
                     raise
