@@ -32,9 +32,15 @@ def process_modules(cfg: Any) -> None:
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     completed_modules: list[str] = []
+    resume_module: str | None = None
+    resume_subunit: int = 0
+    state_path: Path | None = None
     if cfg.resume.enabled:
-        state = load_state()
+        state_path = Path(cfg.resume.state_path) if cfg.resume.state_path else None
+        state = load_state(state_path)
         completed_modules = state.get("completed_modules", [])
+        resume_module = state.get("current_module")
+        resume_subunit = state.get("current_subunit", 0)
 
     all_results: list[dict[str, Any]] = []
 
@@ -50,14 +56,27 @@ def process_modules(cfg: Any) -> None:
         if not sub_units:
             sub_units = [module_functions]
 
+        # Build source map once per module (avoids O(N^2) glob scans)
+        source_map: dict[str, str] = {}
+        decompiled_dir = Path(cfg.input.decompiled_dir)
+        for addr in module_functions:
+            candidates = list(decompiled_dir.glob(f"{addr}*.cpp"))
+            if candidates:
+                source_map[addr] = candidates[0].read_text(encoding="utf-8", errors="replace")
+
+        start_subunit = resume_subunit if (resume_module == module_name) else 0
+        resume_module = None  # only apply to the first matching module
         for sub_idx, subunit in enumerate(sub_units):
+            if sub_idx < start_subunit:
+                continue
             save_state(
                 {
                     "completed_modules": completed_modules,
                     "current_module": module_name,
                     "current_subunit": sub_idx,
                     "phase": "transform",
-                }
+                },
+                state_path,
             )
 
             # Compute prompt_hash from system prompt to detect prompt edits
@@ -67,11 +86,12 @@ def process_modules(cfg: Any) -> None:
             context = build_context(
                 subunit,
                 module_functions,
-                Path(cfg.input.decompiled_dir),
+                decompiled_dir,
                 cfg.optimization.context_window,
                 cache,
                 prompt_hash=prompt_hash,
                 model=cfg.llm.model,
+                source_map=source_map,
             )
 
             results = process_subunit(context, module_name, llm, cfg, cache)
@@ -102,6 +122,19 @@ def process_modules(cfg: Any) -> None:
                     )
 
             all_results.extend(results)
+
+        # Per-module compile check: catch cross-file link errors
+        if getattr(cfg.validation, "compile_per_module", False):
+            module_cpp_files = list(module_dir.glob("*.cpp"))
+            if module_cpp_files:
+                from re_agent.build.validate.compiler import compile_module_check
+
+                mod_ok, mod_err = compile_module_check(module_cpp_files, cfg)
+                if not mod_ok:
+                    import logging
+
+                    _log = logging.getLogger(__name__)
+                    _log.warning("Module %s link errors:\n%s", module_name, mod_err)
 
         completed_modules.append(module_name)
 

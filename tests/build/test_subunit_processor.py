@@ -185,7 +185,7 @@ def test_retry_loop_iterates_max_compile_retries_times(monkeypatch) -> None:
 def test_per_subunit_retry_re_sends_whole_subunit(monkeypatch) -> None:
     """When multiple functions fail compile, retry the whole subunit in one call
     with per-function error annotations, not one call per function."""
-    response = "// FILE: src/mod/A.cpp\nvoid a() {}\n" "\n// FILE: src/mod/B.cpp\nvoid b() {}\n"
+    response = "// FILE: src/mod/A.cpp\nvoid a() {}\n\n// FILE: src/mod/B.cpp\nvoid b() {}\n"
     provider = _FakeProvider(response)
 
     compile_calls = [0]

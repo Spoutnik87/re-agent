@@ -12,6 +12,8 @@ class FailingProvider:
 
     total_cache_hit_tokens: int = 0
     total_cache_miss_tokens: int = 0
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
 
     def __init__(self, fail_count: int = 2, success_response: str = "OK") -> None:
         self._fail_count = fail_count

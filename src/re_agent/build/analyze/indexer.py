@@ -68,7 +68,12 @@ def index_modules(modules_data: dict[str, Any], cfg: Any) -> None:
         if mod_info["size"] <= subunit_size:
             mod_info["sub_units"] = [list(functions)]
         else:
-            sources = [_read_function_source(decompiled_dir, addr) for addr in functions]
+            source_map: dict[str, str] = {}
+            for addr in functions:
+                candidates = list(decompiled_dir.glob(f"{addr}*.cpp"))
+                if candidates:
+                    source_map[addr] = candidates[0].read_text(encoding="utf-8", errors="replace")
+            sources = [source_map.get(addr, "") for addr in functions]
             mod_info["sub_units"] = _group_by_similarity(
                 functions,
                 sources,

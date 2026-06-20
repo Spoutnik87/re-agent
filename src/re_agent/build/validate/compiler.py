@@ -42,15 +42,26 @@ def compile_check(source: str, cfg: Any) -> tuple[bool, str]:
 
 
 def compile_module_check(source_files: list[Path], cfg: Any) -> tuple[bool, str]:
-    """Compile all .cpp files in a module together. Returns (compiles, error_output)."""
-    errors: list[str] = []
-    for src in source_files:
-        if src.suffix != ".cpp":
-            continue
-        source_text = src.read_text(encoding="utf-8")
-        ok, err = compile_check(source_text, cfg)
-        if not ok:
-            errors.append(f"File: {src}\n{err}")
-    if errors:
-        return (False, "\n".join(errors))
-    return (True, "")
+    """Compile all .cpp files in a module together in a single invocation.
+
+    Catches cross-file link/type errors that per-file compilation misses.
+    """
+    cpp_files = [str(f) for f in source_files if f.suffix == ".cpp"]
+    if not cpp_files:
+        return (True, "")
+    flags = cfg.output.compiler_flags.split()
+    try:
+        result = subprocess.run(
+            [cfg.output.compiler, *flags, *cpp_files],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=_compiler_env(cfg.output.compiler),
+        )
+        if result.returncode == 0:
+            return (True, "")
+        return (False, result.stderr + result.stdout)
+    except FileNotFoundError:
+        return (False, f"Compiler not found: {cfg.output.compiler}")
+    except subprocess.TimeoutExpired:
+        return (False, "Module compilation timed out after 60 seconds")
