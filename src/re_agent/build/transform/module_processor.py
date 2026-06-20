@@ -8,11 +8,11 @@ from typing import Any
 from re_agent.build.state.cache import TransformCache
 from re_agent.build.state.resume import load_state, save_state
 from re_agent.build.transform.context_builder import build_context
-from re_agent.build.transform.llm_client import LLMClient
 from re_agent.build.transform.subunit_processor import (
     _render_system_prompt,
     process_subunit,
 )
+from re_agent.llm.registry import create_provider
 
 _FILE_MARKER_RE = re.compile(r"^// FILE: (.+)$", re.MULTILINE)
 
@@ -32,7 +32,7 @@ def process_modules(cfg: Any) -> None:
     with open(modules_path, encoding="utf-8") as f:
         modules_data = json.load(f)
 
-    llm = LLMClient(cfg)
+    llm = create_provider(cfg.llm)
 
     cache = None
     if cfg.optimization.cache_enabled:
@@ -117,7 +117,7 @@ def process_modules(cfg: Any) -> None:
     total = len(all_results)
     passed = sum(1 for r in all_results if r.get("compiles"))
     failed = total - passed
-    total_tokens = llm.stats["prompt_tokens"] + llm.stats["completion_tokens"]
+    total_tokens = llm.total_prompt_tokens + llm.total_completion_tokens
 
     report = {
         "results": all_results,

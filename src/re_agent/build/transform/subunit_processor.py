@@ -7,8 +7,8 @@ from typing import Any
 
 from jinja2 import Template
 
-from re_agent.build.transform.llm_client import LLMClient
 from re_agent.build.validate.compiler import compile_check
+from re_agent.llm.protocol import LLMProvider, Message
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ def _build_retry_prompt(output_file: str, err: str) -> str:
 def process_subunit(
     subunit_context: dict[str, Any],
     module_name: str,
-    llm: LLMClient,
+    llm: LLMProvider,
     cfg: Any,
     cache: Any,
 ) -> list[dict[str, Any]]:
@@ -79,7 +79,8 @@ def process_subunit(
 
     system = _render_system_prompt(cfg, module_name)
     user = _render_task_prompt(module_name, subunit_context)
-    response = llm.send(system, user)
+    messages = [Message(role="system", content=system), Message(role="user", content=user)]
+    response = llm.send(messages)
 
     parsed = _parse_llm_response(response)
     max_retries = getattr(cfg.validation, "max_compile_retries", 0)
@@ -114,7 +115,8 @@ def process_subunit(
             )
         elif max_retries > 0:
             retry_prompt = _build_retry_prompt(output_file, err)
-            retry_response = llm.send(system, retry_prompt)
+            retry_messages = [Message(role="system", content=system), Message(role="user", content=retry_prompt)]
+            retry_response = llm.send(retry_messages)
             retry_parsed = _parse_llm_response(retry_response)
             retry_output = retry_parsed.get(addr, output_file)
 
