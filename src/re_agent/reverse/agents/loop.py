@@ -115,6 +115,8 @@ def run_fix_loop(
                 issues=last_verdict.issues,
                 fix_instructions=last_verdict.fix_instructions,
                 target=target,
+                decompiled=cached_decompile.raw_output if cached_decompile else "",
+                prior_code=last_code,
                 objective_findings=last_objective_verdict.findings if last_objective_verdict else None,
             )
 

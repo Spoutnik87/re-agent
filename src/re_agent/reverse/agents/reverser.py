@@ -164,6 +164,8 @@ class ReverserAgent:
         issues: list[str],
         fix_instructions: list[str],
         target: FunctionTarget,
+        decompiled: str = "",
+        prior_code: str = "",
         objective_findings: list[str] | None = None,
     ) -> tuple[str, str]:
         """Ask the reverser to fix code based on checker feedback."""
@@ -179,6 +181,9 @@ class ReverserAgent:
             class_name=target.class_name,
             function_name=target.function_name,
             address=target.address,
+            decompiled=decompiled,
+            prior_code=prior_code,
+            phase1_summary=self._phase1_analysis,
         )
 
         self.last_prompt = fix_prompt

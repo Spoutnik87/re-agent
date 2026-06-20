@@ -51,6 +51,8 @@ class OpenAIProvider:
         self.total_prompt_tokens: int = 0
         self.total_completion_tokens: int = 0
         self.total_calls: int = 0
+        self.total_cache_hit_tokens: int = 0
+        self.total_cache_miss_tokens: int = 0
 
     # -- LLMProvider interface ------------------------------------------------
 
@@ -72,6 +74,10 @@ class OpenAIProvider:
         if hasattr(response, "usage") and response.usage:
             self.total_prompt_tokens += response.usage.prompt_tokens or 0
             self.total_completion_tokens += response.usage.completion_tokens or 0
+            hit = getattr(response.usage, "prompt_cache_hit_tokens", 0) or 0
+            miss = getattr(response.usage, "prompt_cache_miss_tokens", 0) or 0
+            self.total_cache_hit_tokens += hit
+            self.total_cache_miss_tokens += miss
         self.total_calls += 1
         return choice.message.content or ""
 

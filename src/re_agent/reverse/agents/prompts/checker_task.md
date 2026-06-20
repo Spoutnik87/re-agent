@@ -1,13 +1,14 @@
-Verify the following reversed function against the Ghidra decompilation using the two-pass protocol described in your system instructions.
+Verify the reversed function below against the Ghidra decompilation using the
+two-pass protocol described in your system instructions.
 
-**Function:** ${class_name}::${function_name} at ${address}
+**Ghidra Decompile (ground truth):**
+```
+${decompiled}
+```
 
 **Reversed code:**
 ```cpp
 ${reversed_code}
 ```
 
-**Ghidra Decompile (ground truth):**
-```
-${decompiled}
-```
+**Function:** ${class_name}::${function_name} at ${address}

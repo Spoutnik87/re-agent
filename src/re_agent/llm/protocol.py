@@ -71,3 +71,8 @@ class LLMProvider(Protocol):
             conversation_id: ID returned by :meth:`new_conversation`.
         """
         ...
+
+    # DeepSeek context-cache metrics (optional; providers that don't track
+    # these default to 0 via getattr). Used by the orchestrator's cost report.
+    total_cache_hit_tokens: int
+    total_cache_miss_tokens: int

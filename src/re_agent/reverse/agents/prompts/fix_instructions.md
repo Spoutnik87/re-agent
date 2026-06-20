@@ -1,4 +1,17 @@
-The checker found issues with your reversed code. Please fix all issues listed below.
+The checker found issues with your reversed code. Fix all issues listed below.
+
+**Ghidra Decompile (ground truth):**
+```
+${decompiled}
+```
+
+**Your previous reversed code:**
+```cpp
+${prior_code}
+```
+
+**Your prior Phase 1 analysis (for reference):**
+${phase1_summary}
 
 **Issues to fix:**
 ${issues}
