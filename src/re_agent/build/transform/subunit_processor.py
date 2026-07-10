@@ -39,11 +39,28 @@ def _match_files_to_function(
 ) -> list[dict[str, str]]:
     """Match parsed LLM output files to a specific function.
 
-    Strategy: if there's only one function in the subunit, all files belong
-    to it. Otherwise, try to match by function name in the file content or path.
+    Strategy:
+    1. If there's only one function in the subunit, all files belong to it.
+    2. Otherwise, try to match by function ``name`` in the file content or path
+       (preserves historical behaviour when ``name`` is provided).
+    3. If ``name`` is absent or does not match anything, fall back to matching
+       by ``address``. This is required because ``context_builder.build_context``
+       only emits ``{"address": addr, "code": code}`` (no ``name`` field), and
+       the transform prompt exposes the address to the LLM via
+       ``### Function {{ func.address }}`` so the address is the stable
+       identifier across the LLM round-trip (the system prompt instructs the
+       LLM to *rename* functions, so the original name would not match anyway).
+    4. Last-resort fallback: if exactly one file was parsed, assign it to every
+       function so we never silently produce NO_OUTPUT when the LLM did emit
+       output.
+
+    See docs/_diagnostic_no_output.md for the root-cause analysis
+    that motivated the address-based fallback.
     """
     if total_func_count == 1 and parsed_files:
         return parsed_files
+
+    # 2. Match by name (preserved for backwards compatibility).
     func_name = func.get("name", "")
     if func_name:
         matched = [
@@ -53,6 +70,23 @@ def _match_files_to_function(
         ]
         if matched:
             return matched
+
+    # 3. Match by address (the stable identifier present in both the context
+    #    dict and the LLM prompt/output). Case-insensitive: addresses may appear
+    #    upper- or lower-case in the LLM output.
+    addr = func.get("address", "")
+    if addr:
+        addr_lower = addr.lower()
+        matched = [f for f in parsed_files if addr_lower in f["content"].lower() or addr_lower in f["path"].lower()]
+        if matched:
+            return matched
+
+    # 4. Last-resort fallback: a single parsed file belongs to every function.
+    #    Without this, a subunit of N functions where the LLM emitted only one
+    #    // FILE: block would yield N-1 NO_OUTPUT verdicts.
+    if len(parsed_files) == 1:
+        return parsed_files
+
     return []
 
 
@@ -70,6 +104,25 @@ def _render_system_prompt(cfg: Any, module_name: str) -> str:
         includes_rule=getattr(cfg.project.conventions, "includes_rule", ""),
         max_function_lines=getattr(cfg.project.conventions, "max_function_lines", 200),
         module_name=module_name,
+    )
+    return _prompt
+
+
+def _render_repair_prompt(cfg: Any, module_name: str) -> str:
+    """System prompt for compile-error repair (distinct from beautify).
+
+    Repair and beautify are different objectives: the first pass beautifies,
+    retries repair. Mixing both in one prompt is what made the beautify prompt
+    underperform on non-compiling input.
+    """
+    template_path = _PROMPT_DIR / "repair_system.md"
+    template = Template(template_path.read_text(encoding="utf-8"))
+    decls = getattr(cfg.output, "decls_header", None)
+    _prompt: str = template.render(
+        language=getattr(cfg.output, "language", "C++"),
+        standard=getattr(cfg.output, "standard", "C++17"),
+        module_name=module_name,
+        decls_header=decls if decls else "",
     )
     return _prompt
 
@@ -97,6 +150,7 @@ def process_subunit(
         return []
 
     system = _render_system_prompt(cfg, module_name)
+    repair_system = _render_repair_prompt(cfg, module_name)
     user = _render_task_prompt(module_name, subunit_context)
     messages = [Message(role="system", content=system), Message(role="user", content=user)]
     response = llm.send(messages)
@@ -126,7 +180,7 @@ def process_subunit(
             "re-output with // FILE: markers.\n\n" + error_annotations
         )
         retry_messages = [
-            Message(role="system", content=system),
+            Message(role="system", content=repair_system),
             Message(role="user", content=user),
             Message(role="assistant", content=response),
             Message(role="user", content=retry_prompt),
@@ -137,7 +191,9 @@ def process_subunit(
             parsed_files = retry_files
             max_retries -= 1
 
-    remaining_retries = max_retries
+    # Each still-failing function gets its OWN retry budget. (Previously a single
+    # shared counter starved every function after the first one or two.)
+    per_func_retries = max_retries
 
     # Per-function result building (with per-function retry for still-failing)
     results: list[dict[str, Any]] = []
@@ -169,19 +225,17 @@ def process_subunit(
                     "verdict": "PASS",
                 }
             )
-        elif remaining_retries > 0:
-            func_retries = min(1, remaining_retries)
+        elif per_func_retries > 0:
             retry_files = _retry_with_conversation(
                 func_files,
                 err,
                 func,
-                system,
+                repair_system,
                 user,
                 llm,
-                func_retries,
+                per_func_retries,
                 cfg,
             )
-            remaining_retries -= 1
             if retry_files:
                 func_files = retry_files
                 cpp_file = next((f for f in func_files if f["path"].endswith(".cpp")), func_files[0])

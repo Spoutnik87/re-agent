@@ -32,6 +32,12 @@ def cmd_build(args: argparse.Namespace) -> int:
             graph = build_graph(build_cfg)
             modules = cluster(graph, build_cfg)
             index_modules(modules, build_cfg)
+
+            from re_agent.build.analyze.decls_generator import write_decls_header
+
+            decls_path = write_decls_header(config)
+            if decls_path is not None:
+                print(f"Wrote declarations header: {decls_path}")
             mc = modules["metadata"]["module_count"]
             oc = modules["metadata"]["orphan_count"]
             print(f"Analyze complete: {mc} modules, {oc} orphans")

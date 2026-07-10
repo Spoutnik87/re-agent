@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from re_agent.core.models import GhidraData, SourceMatch
-from re_agent.parity.signals import (
+from re_agent.reverse.core.models import GhidraData, SourceMatch
+from re_agent.reverse.parity.signals import (
     check_call_count_mismatch,
     check_fp_sensitivity,
     check_inline_wrapper,

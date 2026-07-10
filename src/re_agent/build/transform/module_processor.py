@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from re_agent.build.analyze.decls_generator import strip_redundant_externs
 from re_agent.build.state.cache import TransformCache
 from re_agent.build.state.resume import load_state, save_state
 from re_agent.build.transform.context_builder import build_context
@@ -59,10 +60,14 @@ def process_modules(cfg: Any, llm_cfg: Any) -> None:
         # Build source map once per module (avoids O(N^2) glob scans)
         source_map: dict[str, str] = {}
         decompiled_dir = Path(cfg.input.decompiled_dir)
+        decls_path = getattr(cfg.output, "decls_header", None)
         for addr in module_functions:
             candidates = list(decompiled_dir.glob(f"{addr}*.cpp"))
             if candidates:
-                source_map[addr] = candidates[0].read_text(encoding="utf-8", errors="replace")
+                src = candidates[0].read_text(encoding="utf-8", errors="replace")
+                if decls_path:
+                    src = strip_redundant_externs(src, decls_path)
+                source_map[addr] = src
 
         start_subunit = resume_subunit if (resume_module == module_name) else 0
         resume_module = None  # only apply to the first matching module
@@ -90,7 +95,7 @@ def process_modules(cfg: Any, llm_cfg: Any) -> None:
                 cfg.optimization.context_window,
                 cache,
                 prompt_hash=prompt_hash,
-                model=cfg.llm.model,
+                model=llm_cfg.model,
                 source_map=source_map,
             )
 
