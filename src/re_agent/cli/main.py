@@ -34,6 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
     build_p.add_argument(
         "--phase", choices=["analyze", "transform", "assemble"], default=None, help="Run a single build phase"
     )
+    build_p.add_argument("--module", default=None, help="Restrict transform to a single module name")
+    build_p.add_argument("--subunit", type=int, default=None, help="Start at this subunit index for --module")
+    build_p.add_argument(
+        "--max-subunits", type=int, default=None, help="Process at most this many subunits in transform"
+    )
+    build_p.add_argument("--run-id", default=None, help="Run identifier for diagnostics/evidence paths")
 
     # pipeline
     pipe_p = sub.add_parser("pipeline", help="Run full pipeline: reverse then build")

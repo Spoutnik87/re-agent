@@ -15,7 +15,24 @@ from re_agent.build.transform.subunit_processor import (
 from re_agent.llm.registry import create_provider
 
 
-def process_modules(cfg: Any, llm_cfg: Any) -> None:
+def process_modules(
+    cfg: Any,
+    llm_cfg: Any,
+    module: str | None = None,
+    subunit: int | None = None,
+    max_subunits: int | None = None,
+    run_id: str = "",
+) -> dict[str, Any]:
+    """Run the transform phase over all (or selected) modules.
+
+    Args:
+        cfg: Build configuration namespace.
+        llm_cfg: LLM configuration namespace.
+        module: If set, restrict transform to only this module name.
+        subunit: Start at this subunit index (applies to ``--module`` target).
+        max_subunits: Process at most this many subunits, then stop.
+        run_id: Run identifier for diagnostics/evidence paths.
+    """
     modules_path = Path(cfg.output.work_dir) / "modules.json"
     if not modules_path.exists():
         raise FileNotFoundError("modules.json not found. Run 'cr-agent analyze' first.")
@@ -45,7 +62,16 @@ def process_modules(cfg: Any, llm_cfg: Any) -> None:
 
     all_results: list[dict[str, Any]] = []
 
+    # Global subunit count across all modules for --max-subunits bound.
+    # Must live outside the module loop so the cap applies across the
+    # entire invocation, not per-module.
+    subunit_count = 0
+
     for module_name, module_info in modules_data.get("modules", {}).items():
+        # --module filter: skip non-matching modules
+        if module is not None and module_name != module:
+            continue
+
         if module_name in completed_modules:
             continue
 
@@ -69,11 +95,21 @@ def process_modules(cfg: Any, llm_cfg: Any) -> None:
                     src = strip_redundant_externs(src, decls_path)
                 source_map[addr] = src
 
-        start_subunit = resume_subunit if (resume_module == module_name) else 0
+        # --module filter: --subunit overrides resume as the starting point.
+        # Without --module, resume behaviour is unchanged.
+        if module is not None and module_name == module:
+            start_subunit = subunit if subunit is not None else 0
+        else:
+            start_subunit = resume_subunit if (resume_module == module_name) else 0
         resume_module = None  # only apply to the first matching module
-        for sub_idx, subunit in enumerate(sub_units):
+
+        for sub_idx, sub_unit in enumerate(sub_units):
+            # --max-subunits bound: stop once processed enough
+            if max_subunits is not None and subunit_count >= max_subunits:
+                break
             if sub_idx < start_subunit:
                 continue
+            subunit_count += 1
             save_state(
                 {
                     "completed_modules": completed_modules,
@@ -89,7 +125,7 @@ def process_modules(cfg: Any, llm_cfg: Any) -> None:
             prompt_hash = TransformCache.hash_prompt(system_prompt)
 
             context = build_context(
-                subunit,
+                sub_unit,
                 module_functions,
                 decompiled_dir,
                 cfg.optimization.context_window,
@@ -99,6 +135,9 @@ def process_modules(cfg: Any, llm_cfg: Any) -> None:
                 source_map=source_map,
             )
 
+            # Propagate run_id to diagnostics via subunit context
+            if run_id:
+                context["run_id"] = run_id
             results = process_subunit(context, module_name, llm, cfg, cache)
 
             for r in results:
@@ -160,3 +199,11 @@ def process_modules(cfg: Any, llm_cfg: Any) -> None:
 
     with open(Path(cfg.output.work_dir) / "cr-agent-report.json", "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
+
+    summary_result: dict[str, Any] = {
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "total_tokens": total_tokens,
+    }
+    return summary_result

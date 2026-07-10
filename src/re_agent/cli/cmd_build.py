@@ -45,8 +45,24 @@ def cmd_build(args: argparse.Namespace) -> int:
 
         if "transform" in phases:
             print("=== Phase 2/3: Transform (LLM code refinement) ===")
-            process_modules(build_cfg, llm_cfg)
+            summary = process_modules(
+                build_cfg,
+                llm_cfg,
+                module=getattr(args, "module", None),
+                subunit=getattr(args, "subunit", None),
+                max_subunits=getattr(args, "max_subunits", None),
+                run_id=getattr(args, "run_id", "") or "",
+            )
             state.update_build("in_progress", phase="transform", modules_completed=[])
+
+            total = summary.get("total", 0)
+            passed = summary.get("passed", 0)
+            if total > 0 and passed > 0:
+                print(f"Transform complete: {passed}/{total} functions compiled successfully")
+            elif total > 0 and passed == 0:
+                print(f"Transform complete: 0/{total} functions compiled — see report for details")
+            else:
+                print("Transform complete: no functions processed")
 
         if "assemble" in phases:
             print("=== Phase 3/3: Assemble (project tree) ===")
