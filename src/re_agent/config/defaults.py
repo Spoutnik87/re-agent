@@ -51,6 +51,15 @@ reverse:
     log_dir: "reports/re-agent/logs"
     session_file: "re-agent-progress.json"
 
+  # Compile gate (Phase 1). Disabled by default — enable once a compiler is
+  # available to make compilation a first-class PASS criterion.
+  compile:
+    enabled: false
+    compiler: "g++"
+    compiler_flags: "-std=c++23 -m32 -fsyntax-only -w"
+    # decls_header: ".ghidra-exports/_decls.h"
+    require_compile: true
+
 build:
   input:
     decompiled_dir: "reports/re-agent/code/"
@@ -60,7 +69,9 @@ build:
     language: "cpp"
     standard: "c++23"
     compiler: "C:\\\\msys64\\\\mingw32\\\\bin\\\\g++.exe"
-    compiler_flags: "-std=c++23 -m32 -c -Wall -Werror"
+    # Gating compile: warnings surfaced (-Wall) but not fatal. -Werror is a
+    # separate, non-gating final lint.
+    compiler_flags: "-std=c++23 -m32 -c -Wall"
     target_dir: "output/"
 
   project:

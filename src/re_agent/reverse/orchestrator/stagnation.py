@@ -58,6 +58,17 @@ class StagnationTracker:
     def is_pass(
         cv: CheckerVerdict,
         ov: ObjectiveVerdict | None = None,
+        compiles: bool | None = None,
     ) -> bool:
-        """Return True if both checker and optional objective verifier pass."""
-        return cv.verdict == Verdict.PASS and (ov is None or ov.verdict != Verdict.FAIL)
+        """Return True if checker, optional objective verifier, and optional
+        compile gate all pass.
+
+        ``compiles`` is the compile-gate result: ``None`` disables the gate
+        (legacy behaviour), ``False`` fails the round, ``True`` is required for
+        PASS when the gate is active.
+        """
+        return (
+            cv.verdict == Verdict.PASS
+            and (ov is None or ov.verdict != Verdict.FAIL)
+            and (compiles is None or compiles is True)
+        )

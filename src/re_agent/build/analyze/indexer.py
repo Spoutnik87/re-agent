@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore[import-not-found]
-from sklearn.metrics.pairwise import cosine_similarity  # type: ignore[import-not-found]
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 def _read_function_source(decompiled_dir: Path, addr: str) -> str:

@@ -4,6 +4,16 @@ __pycache__/
 dist/
 build/
 !src/re_agent/build/
+# Re-apply __pycache__ exclusion after !src/re_agent/build/ negation
+__pycache__/
+**/__pycache__/
+
+# Exclude local dev artifacts — not suitable for PRs
+.opencode/
+cr-agent-report.json
+pipeline-state.json
+docs/plans/
+docs/superpowers/
 .venv/
 .mypy_cache/
 .pytest_cache/
