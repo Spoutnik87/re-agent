@@ -4,7 +4,9 @@ __pycache__/
 dist/
 build/
 !src/re_agent/build/
-# Re-apply __pycache__ exclusion after !src/re_agent/build/ negation
+!tests/build/
+!tests/build/*.py
+# Re-apply __pycache__ exclusion after !src/re_agent/build/ and !tests/build/ negation
 __pycache__/
 **/__pycache__/
 
