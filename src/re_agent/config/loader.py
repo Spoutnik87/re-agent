@@ -16,6 +16,7 @@ from re_agent.config.schema import (
     BuildOutputConfig,
     BuildProjectConfig,
     BuildResumeConfig,
+    CompileConfig,
     LLMConfig,
     ModulesConfig,
     OrchestratorConfig,
@@ -32,6 +33,32 @@ from re_agent.config.schema import (
 
 _log = logging.getLogger(__name__)
 _T = TypeVar("_T")
+
+
+def _load_dotenv(yaml_path: Path | None = None) -> None:
+    """Load ``.env`` file if present, searching config dir, CWD, and parents."""
+    candidates: list[Path] = []
+    if yaml_path:
+        d = yaml_path.parent
+        for _ in range(5):
+            candidates.append(d / ".env")
+            if d.parent == d or str(d.parent) == d.anchor:
+                break
+            d = d.parent
+    candidates.append(Path(".env"))
+    env_file = None
+    for c in candidates:
+        if c.exists():
+            env_file = c
+            break
+    if env_file is None:
+        return
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(env_file, override=False)
+    except ImportError:
+        pass
 
 
 def _load_yaml_file(path: Path) -> dict[str, Any]:
@@ -149,7 +176,10 @@ def _build_reverse_config(data: dict[str, Any]) -> ReverseConfig:
     parity = _build_with_coercion(ParityConfig, data.get("parity", {}))
     orch = _build_with_coercion(OrchestratorConfig, data.get("orchestrator", {}))
     out = _build_with_coercion(ReverseOutputConfig, data.get("output", {}))
-    return ReverseConfig(backend=backend, project_profile=pp, parity=parity, orchestrator=orch, output=out)
+    compile_cfg = _build_with_coercion(CompileConfig, data.get("compile", {}))
+    return ReverseConfig(
+        backend=backend, project_profile=pp, parity=parity, orchestrator=orch, output=out, compile=compile_cfg
+    )
 
 
 def _build_build_config(data: dict[str, Any]) -> BuildConfig:
@@ -195,6 +225,7 @@ def load_config(
     yaml_path: Path | None = None,
     cli_overrides: dict[str, Any] | None = None,
 ) -> ReAgentConfig:
+    _load_dotenv(yaml_path)
     raw: dict[str, Any] = {}
     if yaml_path is not None:
         if yaml_path.exists():

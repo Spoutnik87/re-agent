@@ -80,6 +80,29 @@ class ReverseOutputConfig:
 
 
 @dataclass
+class CompileConfig:
+    """Reverse-phase compile gate.
+
+    When ``enabled``, each candidate is normalized and compiled inside the fix
+    loop so compilation becomes a first-class PASS criterion and compiler
+    errors are fed back to the reverser while Ghidra/asm context is still in
+    hand. Disabled by default (requires a working compiler).
+
+    ``flags`` is a permissive *gating* profile (syntax-only, no ``-Werror``);
+    strict warning-level polish belongs to the build phase, not this gate.
+    ``decls_header`` is force-included so a function referencing externally
+    defined symbols can still compile in isolation.
+    """
+
+    enabled: bool = False
+    compiler: str = "g++"
+    compiler_flags: str = "-std=c++23 -fsyntax-only -w"
+    decls_header: str | None = None
+    require_compile: bool = True
+    timeout_s: int = 30
+
+
+@dataclass
 class ReverseConfig:
     """Reverse-engineering (Phase 1) configuration."""
 
@@ -88,6 +111,7 @@ class ReverseConfig:
     parity: ParityConfig = field(default_factory=ParityConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
     output: ReverseOutputConfig = field(default_factory=ReverseOutputConfig)
+    compile: CompileConfig = field(default_factory=CompileConfig)
 
 
 @dataclass
@@ -105,7 +129,10 @@ class BuildOutputConfig:
     language: str = "cpp"
     standard: str = "c++23"
     compiler: str = "g++"
-    compiler_flags: str = "-std=c++23 -c -Wall -Werror"
+    # Gating compile profile: warnings are surfaced (-Wall) but do NOT fail the
+    # build. Apply -Werror only as a separate, non-gating final lint.
+    compiler_flags: str = "-std=c++23 -c -Wall"
+    decls_header: str | None = None
     target_dir: str = "output/"
     work_dir: str = "."
 

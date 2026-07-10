@@ -7,8 +7,10 @@ If FAIL: re-run with pro for reasoning (checker, var mapping, large blocks).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
+from re_agent.common.normalize import normalize_code
 from re_agent.llm.protocol import LLMProvider
 from re_agent.reverse.agents.block_reverser import BlockReverserAgent, clear_block_cache, generate_variable_mapping
 from re_agent.reverse.agents.block_splitter import (
@@ -47,6 +49,14 @@ def _empty_result(target: FunctionTarget) -> ReversalResult:
     )
 
 
+def _compile_gate(compile_fn: Callable[[str], tuple[bool, str]] | None, code: str) -> bool | None:
+    """Return None when no gate, else whether the normalized code compiles."""
+    if compile_fn is None:
+        return None
+    ok, _ = compile_fn(normalize_code(code))
+    return ok
+
+
 def reverse_blocks(
     target: FunctionTarget,
     backend: REBackend,
@@ -58,6 +68,8 @@ def reverse_blocks(
     objective_verifier_enabled: bool = True,
     objective_call_count_tolerance: int = 3,
     objective_control_flow_tolerance: int = 2,
+    compile_fn: Callable[[str], tuple[bool, str]] | None = None,
+    require_compile: bool = True,
     fast_mode: bool = False,
     skip_checker: bool = False,
     skip_var_mapping: bool = False,
@@ -137,7 +149,8 @@ def reverse_blocks(
 
         fr = 0
         rec_tracker = StagnationTracker()
-        while not StagnationTracker.is_pass(cv, ov) and fr < max_fix_rounds:
+        compiles = _compile_gate(compile_fn, full_code) if require_compile else None
+        while not StagnationTracker.is_pass(cv, ov, compiles=compiles) and fr < max_fix_rounds:
             fr += 1
             decomposer._block_agent.reset_conversation()
             full_code = decomposer.decompose_and_reverse(
@@ -148,6 +161,7 @@ def reverse_blocks(
             )
             if not full_code:
                 break
+            compiles = _compile_gate(compile_fn, full_code) if require_compile else None
             ov = None
             if objective_verifier_enabled:
                 ov = verify_candidate(
@@ -168,7 +182,7 @@ def reverse_blocks(
                 logger.info("%s: recursive fix loop stagnated after %d rounds, stopping", target.address, fr)
                 break
 
-        ok = cv.verdict == Verdict.PASS and (ov is None or ov.verdict != Verdict.FAIL)
+        compiles = _compile_gate(compile_fn, full_code) if require_compile else None
         return ReversalResult(
             target=target,
             code=full_code,
@@ -177,7 +191,7 @@ def reverse_blocks(
             parity_status=None,
             parity_findings=[],
             rounds_used=1 + fr,
-            success=ok,
+            success=StagnationTracker.is_pass(cv, ov, compiles=compiles),
         )
 
     split = split_decompiled_function(decompiled, max_block_lines=max_block_lines)
@@ -301,16 +315,22 @@ def reverse_blocks(
             control_flow_tolerance=objective_control_flow_tolerance,
             decompile_result=decompile_result,
         )
-        ok = ov.verdict != Verdict.FAIL
+        cv = CheckerVerdict(
+            verdict=Verdict.PASS if ov.verdict != Verdict.FAIL else Verdict.FAIL,
+            summary=(
+                "Skipped LLM checker (function too large)"
+                if ov.verdict != Verdict.FAIL
+                else "Objective verifier failed"
+            ),
+            issues=[] if ov.verdict != Verdict.FAIL else ov.findings,
+            fix_instructions=[],
+        )
+        compiles = _compile_gate(compile_fn, full_code) if require_compile else None
+        ok = StagnationTracker.is_pass(cv, ov, compiles=compiles)
         return ReversalResult(
             target=target,
             code=full_code,
-            checker_verdict=CheckerVerdict(
-                verdict=Verdict.PASS if ok else Verdict.FAIL,
-                summary="Skipped LLM checker (function too large)" if ok else "Objective verifier failed",
-                issues=[] if ok else ov.findings,
-                fix_instructions=[],
-            ),
+            checker_verdict=cv,
             objective_verdict=ov,
             parity_status=None,
             parity_findings=[],
@@ -349,7 +369,8 @@ def reverse_blocks(
     # Fix loop
     fr = 0
     blk_tracker = StagnationTracker()
-    while not StagnationTracker.is_pass(cv, ov) and fr < max_fix_rounds:
+    compiles = _compile_gate(compile_fn, full_code) if require_compile else None
+    while not StagnationTracker.is_pass(cv, ov, compiles=compiles) and fr < max_fix_rounds:
         fr += 1
         # Recompute var_mapping if checker flagged naming/type issues
         if cv and _should_regenerate_varmap(cv) and not skip_var_mapping:
@@ -389,6 +410,7 @@ def reverse_blocks(
         full_code = _stitch(split, all_code)
         if not full_code:
             break
+        compiles = _compile_gate(compile_fn, full_code) if require_compile else None
         # Objective-first: only run LLM checker if objective fails
         ov = None
         if objective_verifier_enabled:
@@ -410,7 +432,7 @@ def reverse_blocks(
             logger.info("%s: fix loop stagnated after %d rounds, stopping", target.address, fr)
             break
 
-    ok = cv.verdict == Verdict.PASS and (ov is None or ov.verdict != Verdict.FAIL)
+    compiles = _compile_gate(compile_fn, full_code) if require_compile else None
     return ReversalResult(
         target=target,
         code=full_code,
@@ -419,7 +441,7 @@ def reverse_blocks(
         parity_status=None,
         parity_findings=[],
         rounds_used=1 + fr,
-        success=ok,
+        success=StagnationTracker.is_pass(cv, ov, compiles=compiles),
         block_code=dict(reversed_blocks) if reversed_blocks else None,
         var_mapping=var_mapping,
     )

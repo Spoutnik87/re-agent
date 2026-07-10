@@ -118,3 +118,96 @@ def test_reverse_single_respects_optimize_false(tmp_path: Path, monkeypatch: pyt
     )
 
     assert called_kwargs["optimize"] is False
+
+
+def test_reverse_single_threads_compile_fn_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When reverse.compile.enabled, reverse_single must pass a callable compile_fn."""
+    from re_agent.reverse.backend.stub import StubBackend
+    from re_agent.reverse.orchestrator.single import reverse_single
+
+    config = ReAgentConfig.create_default()
+    config.reverse.compile.enabled = True
+    config.reverse.output.report_dir = str(tmp_path / "reports")
+    config.reverse.output.log_dir = str(tmp_path / "logs")
+
+    called_kwargs: dict = {}
+
+    def fake_run_fix_loop(**kwargs: object) -> object:
+        nonlocal called_kwargs
+        called_kwargs = kwargs
+        from re_agent.reverse.core.models import CheckerVerdict, ReversalResult, Verdict
+
+        return ReversalResult(
+            target=kwargs["target"],
+            code="undefined4 x;",
+            checker_verdict=CheckerVerdict(verdict=Verdict.PASS, summary="ok"),
+            rounds_used=1,
+            success=True,
+        )
+
+    monkeypatch.setattr("re_agent.reverse.orchestrator.single.run_fix_loop", fake_run_fix_loop)
+
+    class FakeLLM:
+        supports_conversations = False
+
+    class FakeSession:
+        def record_result(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    result = reverse_single(
+        target=FunctionTarget(address="0x123", class_name="CTest", function_name="func"),
+        config=config.reverse,
+        backend=StubBackend(),
+        llm=FakeLLM(),
+        session=FakeSession(),
+    )
+
+    assert callable(called_kwargs["compile_fn"])
+    assert called_kwargs["require_compile"] is True
+    # Output must be normalized (undefined4 -> uint32_t, +cstdint).
+    assert "uint32_t x;" in result.code
+    assert "undefined4" not in result.code
+
+
+def test_reverse_single_no_compile_fn_when_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Compile gate is off by default -> compile_fn must be None."""
+    from re_agent.reverse.backend.stub import StubBackend
+    from re_agent.reverse.orchestrator.single import reverse_single
+
+    config = ReAgentConfig.create_default()
+    config.reverse.output.report_dir = str(tmp_path / "reports")
+    config.reverse.output.log_dir = str(tmp_path / "logs")
+
+    called_kwargs: dict = {}
+
+    def fake_run_fix_loop(**kwargs: object) -> object:
+        nonlocal called_kwargs
+        called_kwargs = kwargs
+        from re_agent.reverse.core.models import CheckerVerdict, ReversalResult, Verdict
+
+        return ReversalResult(
+            target=kwargs["target"],
+            code="code",
+            checker_verdict=CheckerVerdict(verdict=Verdict.PASS, summary="ok"),
+            rounds_used=1,
+            success=True,
+        )
+
+    monkeypatch.setattr("re_agent.reverse.orchestrator.single.run_fix_loop", fake_run_fix_loop)
+
+    class FakeLLM:
+        supports_conversations = False
+
+    class FakeSession:
+        def record_result(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    reverse_single(
+        target=FunctionTarget(address="0x123", class_name="CTest", function_name="func"),
+        config=config.reverse,
+        backend=StubBackend(),
+        llm=FakeLLM(),
+        session=FakeSession(),
+    )
+
+    assert called_kwargs["compile_fn"] is None

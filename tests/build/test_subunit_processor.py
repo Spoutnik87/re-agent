@@ -182,6 +182,81 @@ def test_retry_loop_iterates_max_compile_retries_times(monkeypatch) -> None:
     assert provider.total_calls >= 2
 
 
+def test_match_files_to_function_by_address_when_name_missing() -> None:
+    """Regression test for the NO_OUTPUT bug (docs/_diagnostic_no_output.md).
+
+    ``context_builder.build_context`` emits ``{"address": addr, "code": code}``
+    with NO ``name`` field. The LLM prompt exposes the address via
+    ``### Function {{ func.address }}``, so the address is the stable
+    identifier across the LLM round-trip. Matching must succeed by address
+    even when ``name`` is absent.
+    """
+    from re_agent.build.transform.subunit_processor import _match_files_to_function
+
+    func = {"address": "0x00414580", "code": "void FUN_00414580() {}"}
+    parsed = [
+        {
+            "path": "src/renderer/Renderer.cpp",
+            "content": "// 0x00414580\nvoid Renderer::draw() {}",
+        }
+    ]
+    result = _match_files_to_function(parsed, func, total_func_count=10)
+    assert result == parsed, "must match by address when name is absent"
+
+
+def test_match_files_to_function_address_case_insensitive() -> None:
+    """Addresses may appear upper- or lower-case in LLM output; matching must be case-insensitive."""
+    from re_agent.build.transform.subunit_processor import _match_files_to_function
+
+    func = {"address": "0x00414580", "code": ""}
+    parsed = [
+        {"path": "src/mod/A.cpp", "content": "// 0x00414580\nvoid A::f() {}"},
+        {"path": "src/mod/B.cpp", "content": "// 0x004145a0\nvoid B::g() {}"},
+    ]
+    result = _match_files_to_function(parsed, func, total_func_count=2)
+    assert len(result) == 1
+    assert result[0]["path"] == "src/mod/A.cpp"
+
+
+def test_match_files_to_function_name_takes_precedence_when_present() -> None:
+    """When ``name`` is present and matches, it takes precedence over address matching
+    (preserves backwards compatibility for callers that still provide ``name``)."""
+    from re_agent.build.transform.subunit_processor import _match_files_to_function
+
+    func = {"address": "0x00414580", "code": "", "name": "drawThing"}
+    parsed = [
+        {"path": "src/mod/drawThing.cpp", "content": "void drawThing() {}"},
+        {"path": "src/mod/other.cpp", "content": "// 0x00414580\nvoid other() {}"},
+    ]
+    result = _match_files_to_function(parsed, func, total_func_count=2)
+    assert len(result) == 1
+    assert result[0]["path"] == "src/mod/drawThing.cpp"
+
+
+def test_match_files_to_function_single_parsed_file_fallback() -> None:
+    """When the LLM emits a single // FILE: block for a multi-function subunit,
+    that file is assigned to every function rather than producing N-1 NO_OUTPUT."""
+    from re_agent.build.transform.subunit_processor import _match_files_to_function
+
+    func = {"address": "0x00414580", "code": ""}
+    parsed = [{"path": "src/mod/all.cpp", "content": "void f() {} void g() {}"}]
+    result = _match_files_to_function(parsed, func, total_func_count=2)
+    assert result == parsed
+
+
+def test_match_files_to_function_old_bug_returns_empty_without_address_match() -> None:
+    """Documents the OLD buggy behaviour: with only name-based matching and no
+    name in the context dict, a multi-function subunit returned [] for every
+    function. The fix adds address matching; this test asserts the fix prevents
+    that regression by confirming a non-empty result when the address matches."""
+    from re_agent.build.transform.subunit_processor import _match_files_to_function
+
+    func = {"address": "0x00414580", "code": ""}  # no "name" — the real-world case
+    parsed = [{"path": "src/mod/A.cpp", "content": "// 0x00414580\nvoid A() {}"}]
+    result = _match_files_to_function(parsed, func, total_func_count=10)
+    assert result != [], "address-based matching must prevent the NO_OUTPUT regression"
+
+
 def test_per_subunit_retry_re_sends_whole_subunit(monkeypatch) -> None:
     """When multiple functions fail compile, retry the whole subunit in one call
     with per-function error annotations, not one call per function."""

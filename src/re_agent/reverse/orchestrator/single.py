@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from re_agent.common.compiler import compile_source
+from re_agent.common.normalize import normalize_code
 from re_agent.config.schema import ReverseConfig
 from re_agent.llm.protocol import LLMProvider
 from re_agent.reverse.agents.block_splitter import decompiled_line_count
@@ -17,7 +21,32 @@ from re_agent.reverse.orchestrator.block import reverse_blocks
 from re_agent.reverse.parity.engine import fetch_ghidra_data, score_single
 from re_agent.reverse.parity.source_indexer import SourceIndexer
 
+if TYPE_CHECKING:
+    from re_agent.state.function_state import FunctionStateStore
+
 logger = logging.getLogger(__name__)
+
+
+def _make_compile_fn(config: ReverseConfig) -> Callable[[str], tuple[bool, str]] | None:
+    """Build a compile-gate function from config, or None when disabled.
+
+    The candidate is normalized (deterministic, zero-token) before compiling so
+    leftover Ghidra artefacts never cause spurious compile failures.
+    """
+    cc = config.compile
+    if not getattr(cc, "enabled", False):
+        return None
+
+    def _compile(code: str) -> tuple[bool, str]:
+        return compile_source(
+            normalize_code(code),
+            cc.compiler,
+            cc.compiler_flags,
+            decls_header=cc.decls_header,
+            timeout=cc.timeout_s,
+        )
+
+    return _compile
 
 
 def _compute_max_fix_rounds(line_count: int, max_rounds: int) -> int:
@@ -42,6 +71,7 @@ def reverse_single(
     output_dir: Path | None = None,
     indexer: SourceIndexer | None = None,
     block_llm: LLMProvider | None = None,
+    function_store: FunctionStateStore | None = None,
 ) -> ReversalResult:
     """Reverse a single function: agent loop -> optional parity check -> record.
 
@@ -58,7 +88,23 @@ def reverse_single(
         block_llm: Optional cheaper/faster LLM provider for block-level
             reversals.  When ``None``, uses the main ``llm`` for everything.
     """
+
+    def _record(r: ReversalResult) -> None:
+        if function_store is None:
+            return
+        function_store.update(
+            target.address,
+            reversed=bool(r.code),
+            normalized=True,
+            checker=r.checker_verdict.verdict.value if r.checker_verdict else None,
+            structural=r.objective_verdict.verdict.value if r.objective_verdict else None,
+            parity=r.parity_status.value if r.parity_status else None,
+        )
+        function_store.flush()
+
     log_dir = Path(config.output.log_dir) if config.output.log_dir else None
+    compile_fn = _make_compile_fn(config)
+    require_compile = getattr(config.compile, "require_compile", True)
 
     pipeline_profile: PipelineProfile | None = None
 
@@ -103,6 +149,8 @@ def reverse_single(
                     objective_control_flow_tolerance=config.orchestrator.objective_control_flow_tolerance,
                     project_description=config.project_profile.project_description,
                     max_tokens_per_function=config.orchestrator.max_tokens_per_function,
+                    compile_fn=compile_fn,
+                    require_compile=require_compile,
                 )
 
                 # Strategy by size:
@@ -143,6 +191,8 @@ def reverse_single(
                             max_tokens_per_function=config.orchestrator.max_tokens_per_function,
                             profile=pipeline_profile,
                             few_shot_min_score=config.orchestrator.few_shot_min_score,
+                            compile_fn=compile_fn,
+                            require_compile=require_compile,
                         )
                     # Tier 1: all-flash (fast_mode) — cheap, handles ~80%
                     tier1_result = reverse_blocks(**block_kwargs, fast_mode=True)  # type: ignore[arg-type]
@@ -185,10 +235,12 @@ def reverse_single(
                 block_result = None
 
         if block_result is not None:
+            block_result.code = normalize_code(block_result.code)
             _write_code(block_result, target, config, output_dir)
             _run_parity(block_result, target, config, backend, indexer)
             if session:
                 session.record_result(block_result)
+            _record(block_result)
             return block_result
 
     result = run_fix_loop(
@@ -211,13 +263,17 @@ def reverse_single(
         max_tokens_per_function=config.orchestrator.max_tokens_per_function,
         profile=pipeline_profile,
         few_shot_min_score=config.orchestrator.few_shot_min_score,
+        compile_fn=compile_fn,
+        require_compile=require_compile,
     )
 
+    result.code = normalize_code(result.code)
     _write_code(result, target, config, output_dir)
     _run_parity(result, target, config, backend, indexer)
     if session:
         session.record_result(result)
 
+    _record(result)
     return result
 
 

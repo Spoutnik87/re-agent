@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from re_agent.parity.source_indexer import SourceIndexer
-
 from re_agent.config.schema import ProjectProfile
+from re_agent.reverse.parity.source_indexer import SourceIndexer
 
 
 def test_find_function_body(tmp_path: Path) -> None:

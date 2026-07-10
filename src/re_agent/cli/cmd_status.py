@@ -76,4 +76,16 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"  Build:   {build.get('status', 'unknown')}")
     if summary.get("last_pipeline_run"):
         print(f"  Last run: {summary['last_pipeline_run']}")
+
+    fstate = Path("function-state.json")
+    if fstate.exists():
+        from re_agent.state.function_state import FunctionStateStore
+
+        store = FunctionStateStore(fstate)
+        fs_summary: dict[str, int] = store.summary()
+        print(
+            f"Functions: {fs_summary['reversed']}/{fs_summary['total']} reversed, "
+            f"{fs_summary['compiles']} compile, {fs_summary['behaviorally_equivalent']} behaviorally equivalent"
+        )
+
     return 0

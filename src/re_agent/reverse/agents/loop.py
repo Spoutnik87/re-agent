@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from re_agent.config.schema import ProjectProfile
@@ -46,6 +47,8 @@ def run_fix_loop(
     max_tokens_per_function: int = 0,
     profile: PipelineProfile | None = None,
     few_shot_min_score: int = 0,
+    compile_fn: Callable[[str], tuple[bool, str]] | None = None,
+    require_compile: bool = True,
 ) -> ReversalResult:
     """Run the reverser->checker->fix loop up to max_rounds.
 
@@ -205,6 +208,22 @@ def run_fix_loop(
             )
         last_objective_verdict = objective_verdict
 
+        # Compile gate: the cheapest, most objective signal. Run it here (while
+        # Ghidra/asm context is still available) and feed any errors back into
+        # the next fix round so they get fixed in-context.
+        compiles: bool | None = None
+        compile_error = ""
+        if compile_fn is not None:
+            compiles, compile_error = compile_fn(code)
+            if not compiles:
+                excerpt = compile_error.strip()[:2000]
+                verdict.issues = [*verdict.issues, f"Code fails to compile:\n{excerpt}"]
+                verdict.fix_instructions = [
+                    *verdict.fix_instructions,
+                    "Fix the compilation errors listed above without changing logic, control flow, or call order.",
+                ]
+        compile_gate = compiles if (compile_fn is not None and require_compile) else None
+
         if log_dir:
             check_log = {
                 "round": round_num,
@@ -219,11 +238,13 @@ def run_fix_loop(
                 "objective_verdict": objective_verdict.verdict.value if objective_verdict else None,
                 "objective_summary": objective_verdict.summary if objective_verdict else "",
                 "objective_findings": objective_verdict.findings if objective_verdict else [],
+                "compiles": compiles,
+                "compile_error": compile_error,
             }
             check_path = log_dir / f"round{round_num}-{timestamp}-checker.json"
             check_path.write_text(json.dumps(check_log, indent=2), encoding="utf-8")
 
-        if StagnationTracker.is_pass(verdict, objective_verdict):
+        if StagnationTracker.is_pass(verdict, objective_verdict, compiles=compile_gate):
             cleanup_loop(reverser, checker)
             return ReversalResult(
                 target=target,
