@@ -19,6 +19,51 @@ class Message:
     content: str
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderUsage:
+    """Normalized, reportable usage snapshot for an LLM provider.
+
+    Cache fields are ``None`` when the provider does not surface real cache
+    metrics, so unknown is never faked as a misleading ``0``. OpenAI-compatible
+    endpoints that report DeepSeek-style ``prompt_cache_hit_tokens`` /
+    ``prompt_cache_miss_tokens`` populate them with real ints.
+
+    Attributes:
+        prompt_tokens: Cumulative input/prompt tokens, or ``None`` if untracked.
+        completion_tokens: Cumulative output/completion tokens, or ``None``.
+        cache_hit_tokens: Cumulative cache-hit tokens, or ``None`` if unknown.
+        cache_miss_tokens: Cumulative cache-miss tokens, or ``None`` if unknown.
+        calls: Total number of successful provider calls, or ``None``.
+    """
+
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    cache_hit_tokens: int | None
+    cache_miss_tokens: int | None
+    calls: int | None
+
+
+def get_usage(provider: object) -> ProviderUsage:
+    """Build a normalized :class:`ProviderUsage` snapshot from a provider.
+
+    Prefers a provider-specific ``get_usage()`` method (so providers that
+    distinguish "unknown" from "zero" cache metrics can report accurately).
+    Falls back to reading legacy ``total_*`` int attributes, representing
+    cache metrics as ``None`` (unknown) since the legacy counters cannot
+    distinguish "0 reported" from "not tracked".
+    """
+    method = getattr(provider, "get_usage", None)
+    if callable(method):
+        return method()  # type: ignore[no-any-return]
+    return ProviderUsage(
+        prompt_tokens=getattr(provider, "total_prompt_tokens", None),
+        completion_tokens=getattr(provider, "total_completion_tokens", None),
+        cache_hit_tokens=None,
+        cache_miss_tokens=None,
+        calls=getattr(provider, "total_calls", None),
+    )
+
+
 @runtime_checkable
 class LLMProvider(Protocol):
     """Protocol that all LLM provider implementations must satisfy."""
@@ -72,9 +117,12 @@ class LLMProvider(Protocol):
         """
         ...
 
-    # DeepSeek context-cache metrics (optional; providers that don't track
-    # these default to 0 via getattr). Used by the orchestrator's cost report.
-    total_cache_hit_tokens: int
-    total_cache_miss_tokens: int
+    # DeepSeek context-cache metrics (optional). Providers that surface real
+    # cache counters (OpenAI-compatible with prompt_cache_*_tokens) report
+    # ints; providers that don't track cache (Claude, Codex) use None so
+    # unknown is not faked as 0. Used by the orchestrator's cost report and
+    # normalized via get_usage() into ProviderUsage.
+    total_cache_hit_tokens: int | None
+    total_cache_miss_tokens: int | None
     total_prompt_tokens: int
     total_completion_tokens: int

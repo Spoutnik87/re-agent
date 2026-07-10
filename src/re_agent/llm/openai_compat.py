@@ -9,7 +9,7 @@ from typing import Any
 
 import openai
 
-from re_agent.llm.protocol import Message
+from re_agent.llm.protocol import Message, ProviderUsage
 
 _logger = logging.getLogger(__name__)
 _RETRY_COUNT = 3
@@ -51,8 +51,11 @@ class OpenAIProvider:
         self.total_prompt_tokens: int = 0
         self.total_completion_tokens: int = 0
         self.total_calls: int = 0
-        self.total_cache_hit_tokens: int = 0
-        self.total_cache_miss_tokens: int = 0
+        self.total_cache_hit_tokens: int | None = 0
+        self.total_cache_miss_tokens: int | None = 0
+        # True once a response surfaces prompt_cache_*_tokens, so the
+        # normalized snapshot can distinguish "0 reported" from "not tracked".
+        self._cache_metrics_observed: bool = False
 
     # -- LLMProvider interface ------------------------------------------------
 
@@ -74,12 +77,31 @@ class OpenAIProvider:
         if hasattr(response, "usage") and response.usage:
             self.total_prompt_tokens += response.usage.prompt_tokens or 0
             self.total_completion_tokens += response.usage.completion_tokens or 0
-            hit = getattr(response.usage, "prompt_cache_hit_tokens", 0) or 0
-            miss = getattr(response.usage, "prompt_cache_miss_tokens", 0) or 0
-            self.total_cache_hit_tokens += hit
-            self.total_cache_miss_tokens += miss
+            hit = getattr(response.usage, "prompt_cache_hit_tokens", None)
+            miss = getattr(response.usage, "prompt_cache_miss_tokens", None)
+            if hit is not None or miss is not None:
+                self._cache_metrics_observed = True
+                self.total_cache_hit_tokens = (self.total_cache_hit_tokens or 0) + (hit or 0)
+                self.total_cache_miss_tokens = (self.total_cache_miss_tokens or 0) + (miss or 0)
         self.total_calls += 1
         return choice.message.content or ""
+
+    def get_usage(self) -> ProviderUsage:
+        """Return a normalized usage snapshot.
+
+        Cache metrics are surfaced as real ints once the endpoint has been
+        observed to report ``prompt_cache_*_tokens``; before that they are
+        ``None`` (unknown) so reports never fake unknown cache as 0.
+        """
+        cache_hit: int | None = self.total_cache_hit_tokens if self._cache_metrics_observed else None
+        cache_miss: int | None = self.total_cache_miss_tokens if self._cache_metrics_observed else None
+        return ProviderUsage(
+            prompt_tokens=self.total_prompt_tokens,
+            completion_tokens=self.total_completion_tokens,
+            cache_hit_tokens=cache_hit,
+            cache_miss_tokens=cache_miss,
+            calls=self.total_calls,
+        )
 
     @staticmethod
     def _call_with_retry(fn: Any, kwargs: dict[str, Any]) -> Any:
