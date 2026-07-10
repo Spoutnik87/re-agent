@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from re_agent.llm.protocol import Message
+from re_agent.llm.protocol import Message, ProviderUsage
 
 _logger = logging.getLogger(__name__)
 _RETRY_COUNT = 2
@@ -36,8 +36,9 @@ class CodexCLIProvider:
         self.total_prompt_tokens: int = 0
         self.total_completion_tokens: int = 0
         self.total_calls: int = 0
-        self.total_cache_hit_tokens: int = 0
-        self.total_cache_miss_tokens: int = 0
+        # codex exec returns no usage, so cache metrics are unknown (None).
+        self.total_cache_hit_tokens: int | None = None
+        self.total_cache_miss_tokens: int | None = None
 
     def send(self, messages: list[Message], **kwargs: Any) -> str:
         prompt = self._render_messages(messages)
@@ -96,6 +97,20 @@ class CodexCLIProvider:
     @property
     def supports_conversations(self) -> bool:
         return True
+
+    def get_usage(self) -> ProviderUsage:
+        """Return a normalized usage snapshot.
+
+        Cache metrics are ``None`` because ``codex exec`` returns no usage
+        stats ??? unknown, not a misleading 0.
+        """
+        return ProviderUsage(
+            prompt_tokens=self.total_prompt_tokens,
+            completion_tokens=self.total_completion_tokens,
+            cache_hit_tokens=None,
+            cache_miss_tokens=None,
+            calls=self.total_calls,
+        )
 
     def new_conversation(self, system: str) -> str:
         cid = uuid.uuid4().hex

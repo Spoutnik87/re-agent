@@ -9,7 +9,7 @@ from typing import Any
 
 import anthropic
 
-from re_agent.llm.protocol import Message
+from re_agent.llm.protocol import Message, ProviderUsage
 
 _logger = logging.getLogger(__name__)
 _RETRY_COUNT = 3
@@ -45,8 +45,10 @@ class ClaudeProvider:
         self.total_prompt_tokens: int = 0
         self.total_completion_tokens: int = 0
         self.total_calls: int = 0
-        self.total_cache_hit_tokens: int = 0
-        self.total_cache_miss_tokens: int = 0
+        # Claude usage does not surface cache hit/miss in the fields we read;
+        # None means "unknown", never a misleading 0.
+        self.total_cache_hit_tokens: int | None = None
+        self.total_cache_miss_tokens: int | None = None
 
     # -- LLMProvider interface ------------------------------------------------
 
@@ -82,6 +84,20 @@ class ClaudeProvider:
             if hasattr(block, "text"):
                 parts.append(block.text)
         return "\n".join(parts)
+
+    def get_usage(self) -> ProviderUsage:
+        """Return a normalized usage snapshot.
+
+        Cache metrics are ``None`` because Claude's usage (as read here) does
+        not surface cache hit/miss ??? unknown, not a misleading 0.
+        """
+        return ProviderUsage(
+            prompt_tokens=self.total_prompt_tokens,
+            completion_tokens=self.total_completion_tokens,
+            cache_hit_tokens=None,
+            cache_miss_tokens=None,
+            calls=self.total_calls,
+        )
 
     @staticmethod
     def _call_with_retry(fn: Any, kwargs: dict[str, Any]) -> Any:
