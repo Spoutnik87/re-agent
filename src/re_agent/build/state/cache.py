@@ -52,8 +52,9 @@ class TransformCache:
         tokens_used: int,
         prompt_hash: str = "",
         model: str = "",
+        output_files: list[dict[str, str]] | None = None,
     ) -> None:
-        self._data[address] = {
+        entry: dict[str, Any] = {
             "hash": self.hash_source(source),
             "output_file": output_file,
             "compiles": compiles,
@@ -61,6 +62,16 @@ class TransformCache:
             "prompt_hash": prompt_hash,
             "model": model,
         }
+        if output_files is not None:
+            # Store structured per-file list for cache readers that need
+            # to reconstruct per-address file boundaries.
+            entry["output_files"] = output_files
+            # Reconstruct output_file as a marker-preserving blob so
+            # existing readers that split by _FILE_MARKER_RE can also
+            # recover per-file boundaries without migrating to the new
+            # output_files field.
+            entry["output_file"] = "\n".join(f"// FILE: {f['path']}\n{f['content']}" for f in output_files)
+        self._data[address] = entry
         self._persist()
 
     def has(

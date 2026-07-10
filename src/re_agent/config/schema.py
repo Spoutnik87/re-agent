@@ -21,6 +21,7 @@ class LLMConfig:
 class BackendConfig:
     type: str = "ghidra-bridge"
     cli_path: str = "ghidra"
+    export_dir: str | None = None
     timeout_s: int = 45
 
 
@@ -175,12 +176,25 @@ class ModulesConfig:
 
 @dataclass
 class BuildOptimizationConfig:
-    """LLM optimization and caching configuration."""
+    """LLM optimization and caching configuration.
+
+    ``diagnostics_dir`` is the directory where per-subunit WorkPacket
+    diagnostic JSON files are written. Empty string means "do not write
+    work packet files" (backward-compatible default for callers that have
+    not opted in). The path must NEVER point under ``reports/re-agent/code/``
+    (the precious decompiled corpus) — it is run/evidence/report scoped.
+
+    ``raw_response_capture`` gates writing the raw LLM response text to
+    a file under ``diagnostics_dir``. Disabled by default so unconfigured
+    runs never silently dump raw LLM output to a hidden path.
+    """
 
     subunit_size: int = 10
     context_window: int = 3
     cache_enabled: bool = True
     cache_path: str = ".cr-agent-cache.json"
+    diagnostics_dir: str = ""
+    raw_response_capture: bool = False
 
 
 @dataclass
