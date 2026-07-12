@@ -10,7 +10,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="re-agent",
         description="Autonomous reverse engineering and code reconstruction agent",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 0.2.0")
+    parser.add_argument("--version", action="version", version="%(prog)s 1.2.0")
     parser.add_argument("--config", default="re-agent.yaml", help="Config file path")
 
     sub = parser.add_subparsers(dest="command", help="Available commands")
@@ -40,6 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-subunits", type=int, default=None, help="Process at most this many subunits in transform"
     )
     build_p.add_argument("--run-id", default=None, help="Run identifier for diagnostics/evidence paths")
+    build_p.add_argument(
+        "--no-persist",
+        action="store_true",
+        help="Dry-run transform: skip all disk writes (no temp dirs, no state, no cache, no report)",
+    )
 
     # pipeline
     pipe_p = sub.add_parser("pipeline", help="Run full pipeline: reverse then build")

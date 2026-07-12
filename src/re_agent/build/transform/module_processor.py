@@ -22,6 +22,7 @@ def process_modules(
     subunit: int | None = None,
     max_subunits: int | None = None,
     run_id: str = "",
+    persist: bool = True,
 ) -> dict[str, Any]:
     """Run the transform phase over all (or selected) modules.
 
@@ -32,6 +33,9 @@ def process_modules(
         subunit: Start at this subunit index (applies to ``--module`` target).
         max_subunits: Process at most this many subunits, then stop.
         run_id: Run identifier for diagnostics/evidence paths.
+        persist: If True (default), write generated files, report, state, and
+            cache to disk. If False, skip all disk writes (dry-run mode —
+            results remain in memory / stdout only).
     """
     modules_path = Path(cfg.output.work_dir) / "modules.json"
     if not modules_path.exists():
@@ -43,17 +47,23 @@ def process_modules(
     llm = create_provider(llm_cfg)
 
     cache = None
-    if cfg.optimization.cache_enabled:
+    # --no-persist: never create a cache — it would be written to disk and
+    # also used to skip functions in build_context (which we must not do).
+    if persist and cfg.optimization.cache_enabled:
         cache = TransformCache(cfg.optimization.cache_path)
 
-    temp_dir = Path(cfg.output.work_dir) / "temp_transformed"
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir: Path | None = None
+    if persist:
+        temp_dir = Path(cfg.output.work_dir) / "temp_transformed"
+        temp_dir.mkdir(parents=True, exist_ok=True)
 
     completed_modules: list[str] = []
     resume_module: str | None = None
     resume_subunit: int = 0
     state_path: Path | None = None
-    if cfg.resume.enabled:
+    # --no-persist: never load resume state — we must NOT skip modules based
+    # on a previous run's state, and we must NOT write state at all.
+    if persist and cfg.resume.enabled:
         state_path = Path(cfg.resume.state_path) if cfg.resume.state_path else None
         state = load_state(state_path)
         completed_modules = state.get("completed_modules", [])
@@ -75,8 +85,12 @@ def process_modules(
         if module_name in completed_modules:
             continue
 
-        module_dir = temp_dir / module_name
-        module_dir.mkdir(parents=True, exist_ok=True)
+        if persist:
+            assert temp_dir is not None
+            module_dir = temp_dir / module_name
+            module_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            module_dir = None
 
         module_functions = module_info.get("functions", [])
         sub_units = module_info.get("sub_units", [])
@@ -95,13 +109,31 @@ def process_modules(
                     src = strip_redundant_externs(src, decls_path)
                 source_map[addr] = src
 
-        # --module filter: --subunit overrides resume as the starting point.
-        # Without --module, resume behaviour is unchanged.
+        # P0-1: Determine start subunit and whether it came from resume.
+        #   - Explicit ``--subunit`` (via ``--module``) is a manual override.
+        #     Previous skipped subunits are NOT "already completed".
+        #   - Resume ``current_subunit`` from state means previous subunits
+        #     WERE completed (or were being processed before interrupt).
+        #     They count toward "all subunits processed".
+        #   - Without either, start from 0.
+        is_resume = False
         if module is not None and module_name == module:
+            # Explicit --module + --subunit: no resume counting
             start_subunit = subunit if subunit is not None else 0
+            is_resume = False
+        elif resume_module == module_name:
+            # Resume from state: previous subunits count as completed
+            start_subunit = resume_subunit
+            is_resume = True
         else:
-            start_subunit = resume_subunit if (resume_module == module_name) else 0
+            start_subunit = 0
+            is_resume = False
         resume_module = None  # only apply to the first matching module
+
+        # P0-1: Track per-module results and subunit count independently so that
+        # --max-subunits can stop mid-module without marking it as completed.
+        module_results: list[dict[str, Any]] = []
+        module_subunits_processed = 0
 
         for sub_idx, sub_unit in enumerate(sub_units):
             # --max-subunits bound: stop once processed enough
@@ -110,15 +142,17 @@ def process_modules(
             if sub_idx < start_subunit:
                 continue
             subunit_count += 1
-            save_state(
-                {
-                    "completed_modules": completed_modules,
-                    "current_module": module_name,
-                    "current_subunit": sub_idx,
-                    "phase": "transform",
-                },
-                state_path,
-            )
+            module_subunits_processed += 1
+            if persist:
+                save_state(
+                    {
+                        "completed_modules": completed_modules,
+                        "current_module": module_name,
+                        "current_subunit": sub_idx,
+                        "phase": "transform",
+                    },
+                    state_path,
+                )
 
             # Compute prompt_hash from system prompt to detect prompt edits
             system_prompt = _render_system_prompt(cfg, module_name)
@@ -138,16 +172,21 @@ def process_modules(
             # Propagate run_id to diagnostics via subunit context
             if run_id:
                 context["run_id"] = run_id
-            results = process_subunit(context, module_name, llm, cfg, cache)
+            sub_results = process_subunit(context, module_name, llm, cfg, cache, persist=persist)
 
-            for r in results:
+            for r in sub_results:
                 if r.get("compiles") and r.get("files"):
                     for f in r["files"]:
-                        filename = Path(f["path"]).name
-                        output_path = module_dir / filename
-                        output_path.write_text(f["content"], encoding="utf-8")
+                        if persist and module_dir is not None:
+                            filename = Path(f["path"]).name
+                            output_path = module_dir / filename
+                            output_path.write_text(f["content"], encoding="utf-8")
 
-                if cache is not None:
+                # Cache the result if caching is enabled and the result is
+                # NOT a NO_OUTPUT verdict (NO_OUTPUT is unreliable and caching
+                # it would prevent retry of functions the model failed to emit
+                # files for).
+                if cache is not None and persist and r.get("verdict") not in ("NO_OUTPUT", "INCOMPLETE_TARGETS"):
                     addr = r["function"]
                     source_for_addr = ""
                     for func in context.get("functions_to_transform", []):
@@ -165,10 +204,48 @@ def process_modules(
                         model=llm_cfg.model,
                     )
 
-            all_results.extend(results)
+            module_results.extend(sub_results)
+
+        all_results.extend(module_results)
+
+        # P0-1: Only mark completed if ALL subunits of this module were processed
+        # AND every result has an accepted verdict.
+        # Accepted verdicts: PASS, PASS_RETRY, SKIPPED_COMPILE.
+        # Any other verdict (NO_OUTPUT, INCOMPLETE_TARGETS, FAIL_NO_RETRY,
+        # FAIL_AFTER_RETRY, etc.) blocks completion.
+        # ``--max-subunits`` can stop mid-module; that module must NOT be completed.
+        # ``--subunit`` explicit skip must NOT count skipped subunits as completed.
+        # Only resume state counts previous subunits as already processed.
+        accepted_verdicts = frozenset({"PASS", "PASS_RETRY", "SKIPPED_COMPILE"})
+        # Only for resume: previous subunits count as "already processed".
+        # For explicit --subunit, skipped subunits are NOT completed.
+        already_processed = start_subunit if is_resume else 0
+        total_processed = module_subunits_processed + already_processed
+        all_subunits_processed = total_processed >= len(sub_units)
+        module_has_failure = any(r.get("verdict") not in accepted_verdicts for r in module_results)
+        if all_subunits_processed and not module_has_failure:
+            completed_modules.append(module_name)
+            # P0-2: Persist state immediately after completing a module so the
+            # JSON file reflects the updated completed_modules list.
+            if persist:
+                save_state(
+                    {
+                        "completed_modules": completed_modules,
+                        "current_module": None,
+                        "current_subunit": 0,
+                        "phase": "transform",
+                    },
+                    state_path,
+                )
 
         # Per-module compile check: catch cross-file link errors
-        if getattr(cfg.validation, "compile_per_module", False):
+        if (
+            all_subunits_processed
+            and not module_has_failure
+            and persist
+            and getattr(cfg.validation, "compile_per_module", False)
+            and module_dir is not None
+        ):
             module_cpp_files = list(module_dir.glob("*.cpp"))
             if module_cpp_files:
                 from re_agent.build.validate.compiler import compile_module_check
@@ -180,11 +257,16 @@ def process_modules(
                     _log = logging.getLogger(__name__)
                     _log.warning("Module %s link errors:\n%s", module_name, mod_err)
 
-        completed_modules.append(module_name)
-
     total = len(all_results)
     passed = sum(1 for r in all_results if r.get("compiles"))
-    failed = total - passed
+    incomplete = sum(1 for r in all_results if r.get("verdict") == "INCOMPLETE_TARGETS")
+    hard_rejects = sum(
+        1
+        for r in all_results
+        if r.get("verdict") == "NO_OUTPUT" and r.get("diagnostic", {}).get("match_strategy") == "rejected_identity"
+    )
+    contract_failed = incomplete > 0 or hard_rejects > 0
+    failed = total - passed - incomplete - hard_rejects
     total_tokens = llm.total_prompt_tokens + llm.total_completion_tokens
 
     report = {
@@ -193,17 +275,24 @@ def process_modules(
             "total": total,
             "passed": passed,
             "failed": failed,
+            "incomplete": incomplete,
+            "hard_rejects": hard_rejects,
+            "contract_failed": contract_failed,
             "total_tokens": total_tokens,
         },
     }
 
-    with open(Path(cfg.output.work_dir) / "cr-agent-report.json", "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2)
+    if persist:
+        with open(Path(cfg.output.work_dir) / "cr-agent-report.json", "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2)
 
     summary_result: dict[str, Any] = {
         "total": total,
         "passed": passed,
         "failed": failed,
+        "incomplete": incomplete,
+        "hard_rejects": hard_rejects,
+        "contract_failed": contract_failed,
         "total_tokens": total_tokens,
     }
     return summary_result

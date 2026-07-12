@@ -42,6 +42,7 @@ A single forward-declarations header (`_decls.h`) is force-included during compi
 
 4. Do NOT delete logic to silence an error. Do NOT stub out function bodies.
 5. Keep every `// FILE: <path>` marker exactly as given; re-output the same set of files with the same paths.
+6. **TARGET identity markers**: When retrying, include a `// TARGET: <ordinal> <address>` comment on its own line **immediately before** each `// FILE:` block. The ordinal is the function's zero-based index in the subunit function list; the address is the original function address (e.g., `0x004117c0`). This marker maps each file to its function and is critical for correct output association. Do NOT put it inside the file body.
 
 ## Module Context
 You are repairing functions from the **{{ module_name }}** module.

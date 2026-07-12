@@ -372,8 +372,17 @@ def test_match_strategy_by_address_when_name_missing(monkeypatch, tmp_path: Path
     monkeypatch.chdir(tmp_path)
     _patch_sp(monkeypatch)
     diag_dir = tmp_path / "diag"
+    # The strict identity rule requires the address to be in the file path
+    # or in a ``// Original function:`` comment — bare address references
+    # in content (callee) are NOT identity anchors.
     response = (
-        "// FILE: src/mod/A.cpp\n// 0x00414580\nvoid A() {}\n\n// FILE: src/mod/B.cpp\n// 0x004145a0\nvoid B() {}\n"
+        "// FILE: src/mod/0x00414580__A.cpp\n"
+        "// Original function: 0x00414580\n"
+        "void A() {}\n"
+        "\n"
+        "// FILE: src/mod/0x004145a0__B.cpp\n"
+        "// Original function: 0x004145a0\n"
+        "void B() {}\n"
     )
     provider = _UsageProvider(response)
     ctx = {
@@ -764,9 +773,9 @@ class TestClassifyCompileError:
             "      |            ^~~~~\n"
             "      |            strtol\n"
         )
-        assert classify_compile_error(stderr) == "undeclared_identifier", (
-            "Real error must take priority over decls_header_warning when both appear in stderr"
-        )
+        assert (
+            classify_compile_error(stderr) == "undeclared_identifier"
+        ), "Real error must take priority over decls_header_warning when both appear in stderr"
 
     def test_compile_frontier_sqrtl_undeclared_classifies_as_undeclared_identifier(self) -> None:
         """'sqrtl' was not declared in this scope → 'undeclared_identifier'.
