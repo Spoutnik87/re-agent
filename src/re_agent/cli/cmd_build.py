@@ -26,7 +26,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     if not persist and phase != "transform":
         phase_label = phase if phase else "(all phases)"
         print(
-            f"Error: --no-persist is only valid with --phase transform " f"(got --phase {phase_label})",
+            f"Error: --no-persist is only valid with --phase transform (got --phase {phase_label})",
             file=sys.stderr,
         )
         return 2
@@ -103,9 +103,6 @@ def cmd_build(args: argparse.Namespace) -> int:
                     print(f"Transform complete: 0/{total} functions compiled — see report for details")
             else:
                 print("Transform complete: no functions processed")
-
-        # P0-4: Any contract failure or hard reject → exit 2 before assemble.
-        # Never print "Build complete" in this case.
         if "assemble" in phases:
             if contract_failed or has_incomplete:
                 print("Skipping assemble: contract failed (TARGET violations).")

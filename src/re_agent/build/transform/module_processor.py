@@ -134,7 +134,6 @@ def process_modules(
         # --max-subunits can stop mid-module without marking it as completed.
         module_results: list[dict[str, Any]] = []
         module_subunits_processed = 0
-
         for sub_idx, sub_unit in enumerate(sub_units):
             # --max-subunits bound: stop once processed enough
             if max_subunits is not None and subunit_count >= max_subunits:

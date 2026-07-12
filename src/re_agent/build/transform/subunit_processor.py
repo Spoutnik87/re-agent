@@ -645,9 +645,7 @@ def _validate_explicit_targets(
 
     # Check 1: All files must have TARGET markers
     if parsed_file_count > 0 and len(target_map) < parsed_file_count:
-        return False, (
-            f"Some files lack TARGET markers: {len(target_map)} of " f"{parsed_file_count} files have markers"
-        )
+        return False, (f"Some files lack TARGET markers: {len(target_map)} of {parsed_file_count} files have markers")
 
     func_addrs = {i: f["address"].lower() for i, f in enumerate(functions_to_transform)}
     funcs_with_files: set[int] = set()
@@ -656,14 +654,13 @@ def _validate_explicit_targets(
     for file_idx, (ordinal, addr) in target_map.items():
         # Check 2: Ordinal in range
         if ordinal < 0 or ordinal >= n_funcs:
-            error_reasons.append(f"ordinal {ordinal} out of range [0, {n_funcs - 1}] " f"(file index {file_idx})")
+            error_reasons.append(f"ordinal {ordinal} out of range [0, {n_funcs - 1}] (file index {file_idx})")
             continue
         # Check 3: Address matches
         expected_addr = func_addrs[ordinal]
         if addr != expected_addr:
             error_reasons.append(
-                f"address {addr} at ordinal {ordinal} does not match "
-                f"expected {expected_addr} (file index {file_idx})"
+                f"address {addr} at ordinal {ordinal} does not match expected {expected_addr} (file index {file_idx})"
             )
             continue
         # Check 3b: Path collision (same path claimed by two TARGETs)
@@ -679,7 +676,7 @@ def _validate_explicit_targets(
     # Check 4: Every function has at least one file
     if len(funcs_with_files) != n_funcs:
         missing = sorted(set(range(n_funcs)) - funcs_with_files)
-        return False, (f"Not all functions have files via TARGET markers; " f"missing function indices: {missing}")
+        return False, (f"Not all functions have files via TARGET markers; missing function indices: {missing}")
 
     return True, ""
 

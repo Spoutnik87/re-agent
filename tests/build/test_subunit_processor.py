@@ -2262,18 +2262,18 @@ def test_explicit_identity_valid_match(monkeypatch: Any) -> None:
         assert r["compiles"] is True
         assert len(r["files"]) == 2, f"Function {label} expected 2 files, got {len(r['files'])}"
         diag = r["diagnostic"]
-        assert diag["match_strategy"] == "explicit_identity", (
-            f"Function {label} match_strategy should be " f"'explicit_identity', got {diag['match_strategy']!r}"
-        )
-        assert diag["identity_state"] == "explicit", (
-            f"Function {label} identity_state should be " f"'explicit', got {diag['identity_state']!r}"
-        )
-        assert diag["identity_reason"] == "", (
-            f"Function {label} identity_reason should be empty, " f"got {diag['identity_reason']!r}"
-        )
-        assert diag["target_file_count"] == 2, (
-            f"Function {label} target_file_count should be 2, " f"got {diag['target_file_count']}"
-        )
+        assert (
+            diag["match_strategy"] == "explicit_identity"
+        ), f"Function {label} match_strategy should be 'explicit_identity', got {diag['match_strategy']!r}"
+        assert (
+            diag["identity_state"] == "explicit"
+        ), f"Function {label} identity_state should be 'explicit', got {diag['identity_state']!r}"
+        assert (
+            diag["identity_reason"] == ""
+        ), f"Function {label} identity_reason should be empty, got {diag['identity_reason']!r}"
+        assert (
+            diag["target_file_count"] == 2
+        ), f"Function {label} target_file_count should be 2, got {diag['target_file_count']}"
 
 
 def test_explicit_identity_preserves_content(monkeypatch: Any) -> None:
@@ -2358,16 +2358,7 @@ def test_explicit_identity_rejects_incomplete_targets(monkeypatch: Any) -> None:
     marker, When ``process_subunit`` runs, Then both functions produce
     ``NO_OUTPUT`` with ``match_strategy = "rejected_identity"``.
     """
-    response = (
-        "// TARGET: 0 0x1000\n"
-        "// FILE: a.cpp\n"
-        "// 0x1000\n"
-        "void a() {}\n"
-        "\n"
-        "// FILE: b.cpp\n"
-        "// 0x1001\n"
-        "void b() {}\n"
-    )
+    response = "// TARGET: 0 0x1000\n// FILE: a.cpp\n// 0x1000\nvoid a() {}\n\n// FILE: b.cpp\n// 0x1001\nvoid b() {}\n"
     provider = _FakeProvider(response)
 
     class _Cfg:
@@ -2411,9 +2402,9 @@ def test_explicit_identity_rejects_incomplete_targets(monkeypatch: Any) -> None:
         assert r["compiles"] is False
         assert r["files"] == []
         diag = r["diagnostic"]
-        assert diag["match_strategy"] == "rejected_identity", (
-            f"Expected 'rejected_identity' strategy for {r['function']}, " f"got {diag['match_strategy']!r}"
-        )
+        assert (
+            diag["match_strategy"] == "rejected_identity"
+        ), f"Expected 'rejected_identity' strategy for {r['function']}, got {diag['match_strategy']!r}"
         assert diag["identity_state"] == "rejected"
         assert "Some files lack TARGET markers" in diag["identity_reason"]
         assert diag["target_file_count"] == 0
@@ -2472,7 +2463,7 @@ def test_explicit_identity_rejects_out_of_range_ordinal(monkeypatch: Any) -> Non
 
     Given a TARGET with ordinal 5 for only 2 functions, When
     ``process_subunit`` runs, Then both functions produce NO_OUTPUT."""
-    response = "// TARGET: 5 0x9999\n" "// FILE: x.cpp\n" "void x() {}\n"
+    response = "// TARGET: 5 0x9999\n// FILE: x.cpp\nvoid x() {}\n"
     provider = _FakeProvider(response)
 
     class _Cfg:
@@ -2645,12 +2636,13 @@ def test_no_target_fallback_to_address_matching_preserved(monkeypatch: Any) -> N
         diag = r["diagnostic"]
         # Either by_name (when name matches renamed function in content) or
         # by_address (direct address match) is acceptable.
-        assert diag["match_strategy"] in {"by_name", "by_address"}, (
-            f"Expected 'by_name' or 'by_address' strategy for {r['function']}, " f"got {diag['match_strategy']!r}"
-        )
-    assert diag["identity_state"] == "matched", (
-        f"Expected identity_state 'matched' for {r['function']}, " f"got {diag['identity_state']!r}"
-    )
+        assert diag["match_strategy"] in {
+            "by_name",
+            "by_address",
+        }, f"Expected 'by_name' or 'by_address' strategy for {r['function']}, got {diag['match_strategy']!r}"
+    assert (
+        diag["identity_state"] == "matched"
+    ), f"Expected identity_state 'matched' for {r['function']}, got {diag['identity_state']!r}"
     # identity_reason is populated with a descriptive message for legacy fallback
     assert (
         "legacy" in diag["identity_reason"].lower()
@@ -2800,11 +2792,7 @@ def test_reversed_order_without_identity_no_output(monkeypatch: Any) -> None:
     # content as renamed functions ("void a() {}"), by_name would match them
     # legitimately. We need truly unmatched output.
     response = (
-        "// FILE: src/mod/Other.cpp\n"
-        "void Other::run() {}\n"
-        "\n"
-        "// FILE: src/mod/Another.cpp\n"
-        "void Another::exec() {}\n"
+        "// FILE: src/mod/Other.cpp\nvoid Other::run() {}\n\n// FILE: src/mod/Another.cpp\nvoid Another::exec() {}\n"
     )
     provider = _FakeProvider(response)
 
@@ -3095,10 +3083,7 @@ def test_legacy_double_claim_rejected(monkeypatch: Any, _p0_patches: Any) -> Non
 
     # Both functions 0x1000 and 0x1001 claim the same path via Original function comment
     response = (
-        "// FILE: src/mod/Shared.cpp\n"
-        "// Original function: 0x1000\n"
-        "// Original function: 0x1001\n"
-        "void shared() {}\n"
+        "// FILE: src/mod/Shared.cpp\n// Original function: 0x1000\n// Original function: 0x1001\nvoid shared() {}\n"
     )
     provider = _FakeProvider(response)
     ctx = _p0_context("0x1000", "0x1001")
@@ -3178,7 +3163,7 @@ def test_legacy_fallback_logs_contract_violation(caplog: Any, monkeypatch: Any, 
     cfg = _p0_patches
     import re_agent.build.transform.subunit_processor as sp
 
-    response = "// FILE: src/mod/0x1000__A.cpp\n" "// Original function: 0x1000\n" "void a() {}\n"
+    response = "// FILE: src/mod/0x1000__A.cpp\n// Original function: 0x1000\nvoid a() {}\n"
     provider = _FakeProvider(response)
     ctx = _p0_context("0x1000")
     caplog.clear()
@@ -3214,9 +3199,9 @@ def test_diagnostic_identity_reason_populated(monkeypatch: Any, _p0_patches: Any
         assert r["verdict"] == "NO_OUTPUT"
         diag = r["diagnostic"]
         # TARGET was present but invalid → rejected_identity (not "none")
-        assert diag["match_strategy"] == "rejected_identity", (
-            f"Expected rejected_identity (TARGET present but invalid), " f"got {diag['match_strategy']}"
-        )
+        assert (
+            diag["match_strategy"] == "rejected_identity"
+        ), f"Expected rejected_identity (TARGET present but invalid), got {diag['match_strategy']}"
         assert diag["identity_state"] == "rejected", f"Expected rejected, got {diag['identity_state']}"
         idr = diag["identity_reason"]
         assert (
@@ -3324,14 +3309,7 @@ def test_p1_target_leak_stripped_from_content(monkeypatch: Any, _p0_patches: Any
 
     # The '// TARGET: 1 0x1001' at the end of content block 0's region
     # (before '// FILE: b.cpp') is the next file's TARGET — must be stripped.
-    response = (
-        "// TARGET: 0 0x1000\n"
-        "// FILE: a.cpp\n"
-        "void a() {}\n"
-        "// TARGET: 1 0x1001\n"
-        "// FILE: b.cpp\n"
-        "void b() {}\n"
-    )
+    response = "// TARGET: 0 0x1000\n// FILE: a.cpp\nvoid a() {}\n// TARGET: 1 0x1001\n// FILE: b.cpp\nvoid b() {}\n"
     records, _ = _parse_llm_response_records(response)
     assert len(records) == 2
     # a.cpp content must NOT contain the leaked TARGET for b
@@ -3419,7 +3397,7 @@ def test_retry_contradictory_target_rejected(monkeypatch: Any, _p0_retry_patches
     # Retry response: a.cpp gets contradictory TARGET (wrong address) → must reject retry.
     responses = _FakeMultiResponseProvider(
         [
-            ("// TARGET: 0 0x1000\n" "// FILE: a.cpp\n" "void initial_content() {}\n"),
+            ("// TARGET: 0 0x1000\n// FILE: a.cpp\nvoid initial_content() {}\n"),
             # Retry: contradictory TARGET on same path (0x1001 instead of 0x1000)
             (
                 "// TARGET: 0 0x1001\n"  # wrong address!
@@ -3441,9 +3419,9 @@ def test_retry_contradictory_target_rejected(monkeypatch: Any, _p0_retry_patches
         (f["content"] for f in r.get("files", []) if "initial_content" in f["content"]),
         None,
     )
-    assert initial_content is not None, (
-        "Initial content must be preserved when retry is rejected." f" Files: {r.get('files', [])}"
-    )
+    assert (
+        initial_content is not None
+    ), f"Initial content must be preserved when retry is rejected. Files: {r.get('files', [])}"
 
 
 def test_retry_initial_explicit_missing_target_rejected(monkeypatch: Any, _p0_retry_patches: Any) -> None:
@@ -3463,9 +3441,9 @@ def test_retry_initial_explicit_missing_target_rejected(monkeypatch: Any, _p0_re
     # Initial: valid TARGET.  Retry: missing TARGET.
     responses = _FakeMultiResponseProvider(
         [
-            ("// TARGET: 0 0x1000\n" "// FILE: a.cpp\n" "void initial_content() {}\n"),
+            ("// TARGET: 0 0x1000\n// FILE: a.cpp\nvoid initial_content() {}\n"),
             # Retry: NO target markers at all
-            ("// FILE: a.cpp\n" "void retry_content() {}\n"),
+            ("// FILE: a.cpp\nvoid retry_content() {}\n"),
         ]
     )
 
@@ -3476,18 +3454,18 @@ def test_retry_initial_explicit_missing_target_rejected(monkeypatch: Any, _p0_re
     # Initial had explicit TARGET, retry missing it → retry rejected.
     # The initial association (explicit_identity) must survive.
     diag = r["diagnostic"]
-    assert diag["match_strategy"] == "explicit_identity", (
-        f"Initial explicit identity must survive invalid retry, " f"got {diag['match_strategy']}"
-    )
+    assert (
+        diag["match_strategy"] == "explicit_identity"
+    ), f"Initial explicit identity must survive invalid retry, got {diag['match_strategy']}"
     # Content must be INITIAL (retry was rejected, not merged)
     initial_files = r.get("files", [])
     initial_content = next(
         (f["content"] for f in initial_files if "initial_content" in f["content"]),
         None,
     )
-    assert initial_content is not None, (
-        "Initial content must be preserved when retry is rejected. " f"Files: {initial_files}"
-    )
+    assert (
+        initial_content is not None
+    ), f"Initial content must be preserved when retry is rejected. Files: {initial_files}"
 
 
 def test_retry_with_conversation_wrong_ordinal_rejected(monkeypatch: Any, _p0_retry_patches: Any) -> None:
@@ -3690,7 +3668,7 @@ def test_initial_valid_response_no_invalid_flag(monkeypatch: Any, _p0_patches: A
     cfg = _p0_patches
     import re_agent.build.transform.subunit_processor as sp
 
-    response = "// FILE: src/mod/0x1000__A.cpp\n" "// Original function: 0x1000\n" "void a() {}\n"
+    response = "// FILE: src/mod/0x1000__A.cpp\n// Original function: 0x1000\nvoid a() {}\n"
     provider = _FakeProvider(response)
     ctx = _p0_context("0x1000")
     results = sp.process_subunit(ctx, "mod", provider, cfg, cache=None)
@@ -3751,7 +3729,7 @@ def test_retry_invalid_file_block_preserves_initial(monkeypatch: Any) -> None:
     monkeypatch.setattr(sp, "_render_task_prompt", lambda mn, ctx: "task")
 
     # Initial: valid TARGET-bearing response
-    initial_response = "// TARGET: 0 0x1000\n" "// FILE: a.cpp\n" "void initial_content() {}\n"
+    initial_response = "// TARGET: 0 0x1000\n// FILE: a.cpp\nvoid initial_content() {}\n"
     # Retry: has an empty FILE path → protocol error
     retry_response = (
         "// TARGET: 0 0x1000\n"
@@ -3767,14 +3745,14 @@ def test_retry_invalid_file_block_preserves_initial(monkeypatch: Any) -> None:
     # (explicit_identity) must survive.  Since compile still fails on retry
     # (the retry was rejected, so the original files are recompiled),
     # verdict is FAIL_NO_RETRY (compile never succeeded).
-    assert r["verdict"] != "NO_OUTPUT", (
-        f"Initial association must survive invalid retry; " f"got {r['verdict']}. Files: {r.get('files', [])}"
-    )
+    assert (
+        r["verdict"] != "NO_OUTPUT"
+    ), f"Initial association must survive invalid retry; got {r['verdict']}. Files: {r.get('files', [])}"
     # Initial content must be preserved (not replaced by invalid retry)
     initial_content_found = any("initial_content" in f["content"] for f in r.get("files", []))
-    assert initial_content_found, (
-        "Initial content must be preserved when retry has invalid file block. " f"Files: {r.get('files', [])}"
-    )
+    assert (
+        initial_content_found
+    ), f"Initial content must be preserved when retry has invalid file block. Files: {r.get('files', [])}"
 
 
 def test_retry_invalid_file_block_empty_content_preserves_initial(monkeypatch: Any) -> None:
@@ -3819,11 +3797,9 @@ def test_retry_invalid_file_block_empty_content_preserves_initial(monkeypatch: A
     monkeypatch.setattr(sp, "_render_repair_prompt", lambda cfg, mn: "repair")
     monkeypatch.setattr(sp, "_render_task_prompt", lambda mn, ctx: "task")
 
-    initial_response = "// TARGET: 0 0x1000\n" "// FILE: a.cpp\n" "void keep_me() {}\n"
+    initial_response = "// TARGET: 0 0x1000\n// FILE: a.cpp\nvoid keep_me() {}\n"
     # Retry: file block with only ``` fence (empty content after strip)
-    retry_response = (
-        "// TARGET: 0 0x1000\n" "// FILE: a.cpp\n" "```cpp\n```\n"  # fence-only → empty after strip
-    )
+    retry_response = "// TARGET: 0 0x1000\n// FILE: a.cpp\n```cpp\n```\n"  # fence-only → empty after strip
     provider = _FakeMultiResponseProvider([initial_response, retry_response])
     ctx = _p0_context("0x1000")
     results = sp.process_subunit(ctx, "mod", provider, _Cfg(), cache=None)
@@ -3831,7 +3807,7 @@ def test_retry_invalid_file_block_empty_content_preserves_initial(monkeypatch: A
     r = results[0]
     assert r["verdict"] != "NO_OUTPUT", "Initial must survive invalid retry"
     initial_content_found = any("keep_me" in f["content"] for f in r.get("files", []))
-    assert initial_content_found, "Initial content ('keep_me') must be preserved. " f"Files: {r.get('files', [])}"
+    assert initial_content_found, f"Initial content ('keep_me') must be preserved. Files: {r.get('files', [])}"
 
 
 from re_agent.build.transform.subunit_processor import (  # noqa: E402
@@ -4095,7 +4071,7 @@ def test_recovery_complete() -> None:
 
     llm = _SeqProvider(
         [
-            "// TARGET: 1 0x1001\n// FILE: b.cpp\nint y;\n" "// TARGET: 2 0x1002\n// FILE: c.cpp\nint z;\n",
+            "// TARGET: 1 0x1001\n// FILE: b.cpp\nint y;\n// TARGET: 2 0x1002\n// FILE: c.cpp\nint z;\n",
         ]
     )
     final = _run_target_recovery(initial, funcs, llm, "system")
@@ -4231,7 +4207,7 @@ def test_path_collision_hard_reject(monkeypatch: Any) -> None:
     # The same path "s.cpp" claimed by two different TARGETs â†’ path collision
     provider = _SeqProvider(
         [
-            "// TARGET: 0 0x1000\n// FILE: s.cpp\nvoid a() {}\n" "// TARGET: 1 0x1001\n// FILE: s.cpp\nvoid b() {}\n",
+            "// TARGET: 0 0x1000\n// FILE: s.cpp\nvoid a() {}\n// TARGET: 1 0x1001\n// FILE: s.cpp\nvoid b() {}\n",
         ]
     )
     ctx = {
