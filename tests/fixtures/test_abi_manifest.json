@@ -1,0 +1,1 @@
+{"architecture":"x86","pointer_size":4,"sha256_hash":"0a3d0378d9b996ea142f6729a36f821f58e70d9e61f6865a680e19750587d9b6","symbols":[{"address":4096,"calling_convention":"cdecl","name":"func_a","output_path":"mod_a.cpp","signature":"void func_a()"}],"version":"1.0.0"}

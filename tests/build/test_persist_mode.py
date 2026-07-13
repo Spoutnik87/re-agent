@@ -537,6 +537,29 @@ def test_persist_default_is_true(monkeypatch: Any, tmp_path: Path) -> None:
 def test_cmd_build_no_persist_skips_state_construction(monkeypatch: Any, tmp_path: Path) -> None:
     """Given --no-persist, When cmd_build runs, Then PipelineState is NOT
     constructed (== state is None so update_build/flush are never called)."""
+    # Create a valid AbiManifest for the contracts section
+    import hashlib
+
+    from re_agent.contracts import Architecture, CallingConvention, Symbol, manifest_from_symbols, save_manifest
+
+    manifest = manifest_from_symbols(
+        version="1.0.0",
+        architecture=Architecture.X86,
+        pointer_size=4,
+        symbols=[
+            Symbol(
+                address=0x1000,
+                name="func_a",
+                signature="void func_a()",
+                calling_convention=CallingConvention.CDECL,
+                output_path="mod_a.cpp",
+            ),
+        ],
+    )
+    manifest_path = tmp_path / "abi_manifest.json"
+    save_manifest(manifest, manifest_path)
+    raw_hash = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+
     config_path = tmp_path / "re-agent.yaml"
     tp = tmp_path.as_posix()
     config_path.write_text(
@@ -548,6 +571,10 @@ build:
     decompiled_dir: "{tp}/decompiled_stubs"
   output:
     work_dir: "{tp}"
+contracts:
+  transformation_policy: "preserve_abi"
+  abi_manifest_path: "{manifest_path.as_posix()}"
+  abi_manifest_sha256: "{raw_hash}"
 """
     )
 

@@ -37,3 +37,8 @@ llm:
   model: "claude-sonnet-4-5-20250929"
   max_tokens: 4096
   temperature: 0.0
+
+contracts:
+  transformation_policy: "preserve_abi"
+  abi_manifest_path: "test_abi_manifest.json"
+  abi_manifest_sha256: "b11543ea4c61df60e46db7c9bc90cc0baadbbf9235055c1a994809d466f9795a"

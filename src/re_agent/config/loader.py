@@ -17,6 +17,7 @@ from re_agent.config.schema import (
     BuildProjectConfig,
     BuildResumeConfig,
     CompileConfig,
+    ContractsConfig,
     LLMConfig,
     ModulesConfig,
     OrchestratorConfig,
@@ -30,9 +31,13 @@ from re_agent.config.schema import (
     ReverseOutputConfig,
     ValidationConfig,
 )
+from re_agent.contracts import load_verified_manifest
 
 _log = logging.getLogger(__name__)
 _T = TypeVar("_T")
+
+
+_KNOWN_CONTRACTS_KEYS: frozenset[str] = frozenset({"transformation_policy", "abi_manifest_path", "abi_manifest_sha256"})
 
 
 def _load_dotenv(yaml_path: Path | None = None) -> None:
@@ -97,6 +102,10 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
         # Legacy flat keys (backward compat)
         ("RE_AGENT_BACKEND_CLI_PATH", ["backend", "cli_path"], str),
         ("RE_AGENT_BACKEND_TIMEOUT", ["backend", "timeout_s"], int),
+        # Contracts overrides
+        ("RE_AGENT_CONTRACTS_TRANSFORMATION_POLICY", ["contracts", "transformation_policy"], str),
+        ("RE_AGENT_CONTRACTS_ABI_MANIFEST_PATH", ["contracts", "abi_manifest_path"], str),
+        ("RE_AGENT_CONTRACTS_ABI_MANIFEST_SHA256", ["contracts", "abi_manifest_sha256"], str),
     ]
     for env_var, key_path, cast_type in env_mappings:
         value = os.environ.get(env_var)
@@ -213,18 +222,131 @@ def _build_build_config(data: dict[str, Any]) -> BuildConfig:
     )
 
 
-def _build_config(raw: dict[str, Any]) -> ReAgentConfig:
+def _validate_contracts(contracts: ContractsConfig, yaml_dir: Path | None) -> None:
+    """Validate contracts configuration fail-fast using ``load_verified_manifest``.
+
+    This is a *breaking migration*: any YAML config without a properly
+    configured ``contracts`` section is rejected with a clear error.
+    There is no legacy fallback.
+
+    Raises
+    ------
+    ValueError
+        If policy is missing, invalid, path/hash empty, file not found,
+        JSON invalid, or hash mismatch.
+    FileNotFoundError
+        If the resolved manifest path does not exist.
+    """
+    # ── Policy presence (breaking) ──────────────────────────────────────
+    if contracts.transformation_policy is None:
+        raise ValueError(
+            "contracts.transformation_policy is required. "
+            "Set it to 'preserve_abi' to enable ABI preservation. "
+            "This is a breaking migration: old configs without this section "
+            "are rejected."
+        )
+
+    # ── Policy value ────────────────────────────────────────────────────
+    if contracts.transformation_policy != "preserve_abi":
+        raise ValueError(
+            f"contracts.transformation_policy={contracts.transformation_policy!r} "
+            "is not supported. Only 'preserve_abi' is valid."
+        )
+
+    # ── Resolve manifest path (relative to YAML config dir) ─────────────
+    manifest_path = Path(contracts.abi_manifest_path)
+    if not manifest_path.is_absolute() and yaml_dir is not None:
+        manifest_path = yaml_dir / manifest_path
+
+    if not manifest_path.exists():
+        raise FileNotFoundError(
+            f"ABI manifest not found: {manifest_path} "
+            f"(resolved from contracts.abi_manifest_path="
+            f"{contracts.abi_manifest_path!r})"
+        )
+    if not manifest_path.is_file():
+        raise ValueError(f"ABI manifest path is not a regular file: {manifest_path}")
+
+    # ── Validate SHA-256 ────────────────────────────────────────────────
+    sha256_hex = contracts.abi_manifest_sha256.strip()
+    if len(sha256_hex) != 64:
+        raise ValueError(
+            "contracts.abi_manifest_sha256 must be exactly 64 hex characters "
+            f"(SHA-256 digest), got {len(sha256_hex)} characters: "
+            f"{sha256_hex!r}"
+        )
+    _validate_hex(sha256_hex)
+
+    # ── Delegate to contracts module (loads JSON, validates raw hash) ──
+    try:
+        load_verified_manifest(manifest_path, expected_raw_hash=sha256_hex)
+    except ValueError as exc:
+        raise ValueError(f"ABI manifest validation failed: {exc}") from exc
+
+
+def _validate_hex(hex_str: str) -> None:
+    """Fail-fast if *hex_str* is not exactly 64 hex characters."""
+    if len(hex_str) != 64:
+        raise ValueError(f"Expected 64 hex characters, got {len(hex_str)}: {hex_str!r}")
+    try:
+        int(hex_str, 16)
+    except ValueError as err:
+        raise ValueError(f"Not valid hexadecimal: {hex_str!r}") from err
+
+
+def _build_config(raw: dict[str, Any], yaml_path: Path | None = None) -> ReAgentConfig:
     llm = _build_with_coercion(LLMConfig, raw.get("llm", {}))
     reverse = _build_reverse_config(raw.get("reverse", {}))
     build = _build_build_config(raw.get("build", {}))
+    contracts_raw = raw.get("contracts", {})
+    if isinstance(contracts_raw, dict):
+        _validate_known_keys(contracts_raw, _KNOWN_CONTRACTS_KEYS, "contracts")
+    contracts = _build_with_coercion(ContractsConfig, contracts_raw)
     pipeline = _build_with_coercion(PipelineConfig, raw.get("pipeline", {}))
-    return ReAgentConfig(llm=llm, reverse=reverse, build=build, pipeline=pipeline)
+    config = ReAgentConfig(llm=llm, reverse=reverse, build=build, contracts=contracts, pipeline=pipeline)
+
+    # Always validate contracts (breaking migration — no legacy bypass)
+    yaml_dir = yaml_path.parent if yaml_path is not None else None
+    _validate_contracts(config.contracts, yaml_dir)
+
+    return config
+
+
+def _validate_known_keys(data: dict[str, Any], known: frozenset[str], section: str) -> None:
+    """Raise ValueError on unknown keys in *data* for *section*."""
+    unknown = set(data) - known
+    if unknown:
+        raise ValueError(f"Unknown key(s) in {section} section: {', '.join(sorted(unknown))}")
 
 
 def load_config(
     yaml_path: Path | None = None,
     cli_overrides: dict[str, Any] | None = None,
 ) -> ReAgentConfig:
+    """Load, validate, and return a ``ReAgentConfig``.
+
+    This is a **breaking migration**: ``load_config(None)`` no longer returns
+    defaults — it looks for ``re-agent.yaml`` in the current directory and
+    fails with ``FileNotFoundError`` if none is found.  Use ``re-agent init
+    --abi-manifest <PATH>`` to create a valid config file.
+
+    Parameters
+    ----------
+    yaml_path:
+        Explicit path to a YAML config file.  When ``None``, the loader
+        tries ``re-agent.yaml`` in the current directory.
+    cli_overrides:
+        Optional dotted-key → value overrides (e.g. ``llm.provider``).
+
+    Raises
+    ------
+    FileNotFoundError
+        If *yaml_path* is ``None`` and no ``re-agent.yaml`` exists in CWD,
+        or if the specified path does not exist.
+    ValueError
+        If the config fails validation (missing/invalid contracts, bad
+        manifest SHA-256, malicious manifest content, etc.).
+    """
     _load_dotenv(yaml_path)
     raw: dict[str, Any] = {}
     if yaml_path is not None:
@@ -235,9 +357,16 @@ def load_config(
     else:
         default_path = Path("re-agent.yaml")
         if default_path.exists():
+            yaml_path = default_path  # ← enables contract validation
             raw = _load_yaml_file(default_path)
+        else:
+            raise FileNotFoundError(
+                "No config file specified and 're-agent.yaml' not found in "
+                "the current directory.  Create one with:\n"
+                "  re-agent init --abi-manifest <PATH_TO_ABI_MANIFEST>"
+            )
 
     raw = _apply_env_overrides(raw)
     if cli_overrides:
         raw = _apply_cli_overrides(raw, cli_overrides)
-    return _build_config(raw)
+    return _build_config(raw, yaml_path)

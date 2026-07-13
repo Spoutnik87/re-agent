@@ -15,7 +15,11 @@ from re_agent.reverse.utils.address import normalize_address
 
 
 def cmd_parity(args: argparse.Namespace) -> int:
-    config = load_config(Path(args.config))
+    try:
+        config = load_config(Path(args.config))
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
+        return 2
     rev_cfg = config.reverse
     profile = rev_cfg.project_profile
 
