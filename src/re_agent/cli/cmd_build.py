@@ -44,9 +44,13 @@ def cmd_build(args: argparse.Namespace) -> int:
     has_incomplete = False
     contract_failed = False
 
+    # --no-persist: human messages go to stderr; stdout is reserved for JSON.
+    _out = sys.stderr if not persist else sys.stdout
+
     try:
         if "analyze" in phases:
-            print("=== Phase 1/3: Analyze (call graph + clustering) ===")
+            if persist:
+                print("=== Phase 1/3: Analyze (call graph + clustering) ===")
             graph = build_graph(build_cfg)
             modules = cluster(graph, build_cfg)
             index_modules(modules, build_cfg)
@@ -55,15 +59,17 @@ def cmd_build(args: argparse.Namespace) -> int:
 
             decls_path = write_decls_header(config)
             if decls_path is not None:
-                print(f"Wrote declarations header: {decls_path}")
+                print(f"Wrote declarations header: {decls_path}", file=_out)
             mc = modules["metadata"]["module_count"]
             oc = modules["metadata"]["orphan_count"]
-            print(f"Analyze complete: {mc} modules, {oc} orphans")
+            if persist:
+                print(f"Analyze complete: {mc} modules, {oc} orphans")
             if persist and state is not None:
                 state.update_build("in_progress", phase="analyze", modules_completed=[])
 
         if "transform" in phases:
-            print("=== Phase 2/3: Transform (LLM code refinement) ===")
+            if persist:
+                print("=== Phase 2/3: Transform (LLM code refinement) ===")
             summary = process_modules(
                 build_cfg,
                 llm_cfg,
@@ -79,6 +85,7 @@ def cmd_build(args: argparse.Namespace) -> int:
             total = summary.get("total", 0)
             passed = summary.get("passed", 0)
             incomplete = summary.get("incomplete", 0)
+            budget_exceeded = summary.get("budget_exceeded", 0)
             contract_failed = summary.get("contract_failed", False)
 
             if total > 0 and passed > 0:
@@ -86,28 +93,37 @@ def cmd_build(args: argparse.Namespace) -> int:
                 if incomplete:
                     parts.append(f"{incomplete} incomplete targets")
                     has_incomplete = True
-                print(f"Transform complete: {', '.join(parts)}")
+                if budget_exceeded:
+                    parts.append(f"{budget_exceeded} budget exceeded")
+                    has_incomplete = True
+                print(f"Transform complete: {', '.join(parts)}", file=_out)
             elif total > 0 and passed == 0:
                 if contract_failed:
                     msg = (
                         f"CONTRACT FAILED — {incomplete}/{total} functions have INCOMPLETE_TARGETS "
                         "(TARGET contract required but recovery exhausted)"
                     )
-                    print(f"Transform rejected: {msg}")
+                    print(f"Transform rejected: {msg}", file=_out)
+                    has_incomplete = True
+                elif budget_exceeded:
+                    msg = f"{budget_exceeded}/{total} functions BUDGET_EXCEEDED — transform capped"
+                    print(f"Transform rejected: {msg}", file=_out)
                     has_incomplete = True
                 elif incomplete:
                     msg = f"{incomplete}/{total} functions have INCOMPLETE_TARGETS — recovery exhausted"
-                    print(f"Transform complete: {msg}")
+                    print(f"Transform complete: {msg}", file=_out)
                     has_incomplete = True
                 else:
-                    print(f"Transform complete: 0/{total} functions compiled — see report for details")
+                    print(f"Transform complete: 0/{total} functions compiled — see report for details", file=_out)
             else:
-                print("Transform complete: no functions processed")
+                print("Transform complete: no functions processed", file=_out)
+
         if "assemble" in phases:
             if contract_failed or has_incomplete:
-                print("Skipping assemble: contract failed (TARGET violations).")
+                print("Skipping assemble: contract failed (TARGET violations).", file=_out)
             else:
-                print("=== Phase 3/3: Assemble (project tree) ===")
+                if persist:
+                    print("=== Phase 3/3: Assemble (project tree) ===")
                 build_tree(build_cfg)
                 if persist and state is not None:
                     state.update_build("completed")
@@ -123,7 +139,8 @@ def cmd_build(args: argparse.Namespace) -> int:
     if contract_failed or has_incomplete:
         code = 2 if contract_failed else 1
         label = "CONTRACT FAILED" if contract_failed else "INCOMPLETE"
-        print(f"Build {label}: TARGET requirements not met.")
+        print(f"Build {label}: TARGET requirements not met.", file=_out)
         return code
-    print("Build complete.")
+    if persist:
+        print("Build complete.")
     return 0

@@ -238,6 +238,7 @@ class FunctionVerdict:
     identity_state: str = ""
     identity_reason: str = ""
     target_file_count: int = 0
+    retry_skip_reason: str = ""
 
     def __post_init__(self) -> None:
         if (self.compile_error is None) != (self.compile_error_category is None):
@@ -258,6 +259,7 @@ class FunctionVerdict:
             "identity_state": self.identity_state,
             "identity_reason": self.identity_reason,
             "target_file_count": self.target_file_count,
+            "retry_skip_reason": self.retry_skip_reason,
         }
 
 

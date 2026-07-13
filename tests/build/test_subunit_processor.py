@@ -175,10 +175,11 @@ def test_process_subunit_uses_shared_provider_protocol(monkeypatch) -> None:
 def test_retry_loop_iterates_max_compile_retries_times(monkeypatch) -> None:
     """The retry must loop max_compile_retries times, not just once."""
     call_count = [0]
+    retryable_err = "error: expected ';' before '}' token"
 
     def _flaky_compile(code: str, cfg: Any) -> tuple[bool, str]:
         call_count[0] += 1
-        return (call_count[0] >= 3, "error" if call_count[0] < 3 else "")
+        return (call_count[0] >= 3, retryable_err if call_count[0] < 3 else "")
 
     response = "// FILE: src/mod/Class.cpp\nvoid f() {}\n"
     provider = _FakeProvider(response)
@@ -326,10 +327,11 @@ def test_per_subunit_retry_re_sends_whole_subunit(monkeypatch) -> None:
     provider = _FakeProvider(response)
 
     compile_calls = [0]
+    retryable_err = "error: expected ';' before '}' token"
 
     def _compile(code: str, cfg: Any) -> tuple[bool, str]:
         compile_calls[0] += 1
-        return (compile_calls[0] > 2, "error" if compile_calls[0] <= 2 else "")
+        return (compile_calls[0] > 2, retryable_err if compile_calls[0] <= 2 else "")
 
     class _Cfg:
         class output:
@@ -1809,12 +1811,13 @@ def test_retry_merge_preserves_initial_success(monkeypatch) -> None:
     provider = _FakeMultiResponseProvider([initial_response, retry_response])
 
     compile_calls: list[int] = [0]
+    retryable_err = "error: expected ';' before '}' token"
 
     def _compiler_override(func_files: list[dict[str, str]], cpp_file: dict[str, str], cfg: Any) -> tuple[bool, str]:
         compile_calls[0] += 1
-        # Call 1 = Function A in first pass → pass
-        # Call 2 = Function B in first pass → fail (triggers subunit retry)
-        return (compile_calls[0] != 2, "error" if compile_calls[0] == 2 else "")
+        # Calls 1-2 (first pass for A and B) → fail → n_retryable=2 → subunit retry
+        # Calls 3+ (retry compile for A and B) → pass (retry fixed everything)
+        return (compile_calls[0] > 2, retryable_err if compile_calls[0] <= 2 else "")
 
     class _Cfg:
         class output:
@@ -1840,6 +1843,7 @@ def test_retry_merge_preserves_initial_success(monkeypatch) -> None:
 
     monkeypatch.setattr(sp, "_compile_generated_cpp", _compiler_override)
     monkeypatch.setattr(sp, "_render_system_prompt", lambda cfg, mn: "system")
+    monkeypatch.setattr(sp, "_render_repair_prompt", lambda cfg, mn: "repair")
     monkeypatch.setattr(sp, "_render_task_prompt", lambda mn, ctx: "task")
 
     ctx: dict[str, Any] = {
@@ -1868,7 +1872,6 @@ def test_retry_merge_preserves_initial_success(monkeypatch) -> None:
     )
     assert len(result_a.get("files", [])) > 0, "Function A should still have files after partial retry, got empty files"
     # A was PASS on first compile, so it must remain PASS (not PASS_RETRY).
-    # Currently the bug turns it into NO_OUTPUT — that is the regression.
     assert result_a["verdict"] in (
         "PASS",
         "PASS_RETRY",
@@ -1881,7 +1884,7 @@ def test_retry_merge_preserves_initial_success(monkeypatch) -> None:
     # ── Function B must have some non-NO_OUTPUT verdict ──
     assert result_b["verdict"] != "NO_OUTPUT", "Function B became NO_OUTPUT — retried function should have files."
 
-    # ── Exactly 2 LLM calls: initial + subunit retry ──
+    # ── Exactly 2 LLM calls: initial + subunit retry (both functions fail → n_retryable=2 → subunit retry)
     assert provider.total_calls == 2, f"Expected 2 LLM calls (initial + subunit retry), got {provider.total_calls}"
 
 
@@ -1934,12 +1937,13 @@ def test_retry_merge_by_address_not_file_order(monkeypatch) -> None:
     provider = _FakeMultiResponseProvider([initial_response, retry_response])
 
     compile_calls: list[int] = [0]
+    retryable_err = "error: expected ';' before '}' token"
 
     def _compiler_override(func_files: list[dict[str, str]], cpp_file: dict[str, str], cfg: Any) -> tuple[bool, str]:
         compile_calls[0] += 1
-        # Call 1 = Function A in first pass → pass
-        # Call 2 = Function B in first pass → fail (triggers subunit retry)
-        return (compile_calls[0] != 2, "error" if compile_calls[0] == 2 else "")
+        # Both functions fail on first pass → n_retryable=2 → subunit retry
+        # Calls 3+ (retry compile) → pass
+        return (compile_calls[0] > 2, retryable_err if compile_calls[0] <= 2 else "")
 
     class _Cfg:
         class output:
@@ -1966,6 +1970,7 @@ def test_retry_merge_by_address_not_file_order(monkeypatch) -> None:
     # Patch _compile_generated_cpp directly (handles both .h/.cpp pairs)
     monkeypatch.setattr(sp, "_compile_generated_cpp", _compiler_override)
     monkeypatch.setattr(sp, "_render_system_prompt", lambda cfg, mn: "system")
+    monkeypatch.setattr(sp, "_render_repair_prompt", lambda cfg, mn: "repair")
     monkeypatch.setattr(sp, "_render_task_prompt", lambda mn, ctx: "task")
 
     ctx: dict[str, Any] = {
@@ -2057,15 +2062,17 @@ def test_retry_diagnostics_include_initial_effective_marker_counts(monkeypatch: 
 
     provider = _FakeMultiResponseProvider([initial_response, retry_response])
 
-    # ── Compile: function B (0x1001) fails on first pass only ──
+    # ── Compile: functions B (0x1001) and C (0x1002) fail on first pass only ──
+    # At least 2 retryable failures → n_retryable >= 2 → subunit retry triggered
     _compile_calls: dict[str, int] = {}
+    _retryable_err = "error: expected ';' before '}' token"
 
     def _selective_compile(code: str, cfg: Any) -> tuple[bool, str]:
         for addr in ("0x1000", "0x1001", "0x1002"):
             if addr in code:
                 _compile_calls[addr] = _compile_calls.get(addr, 0) + 1
-                if addr == "0x1001" and _compile_calls[addr] == 1:
-                    return (False, f"error: {addr} synthetic failure")
+                if addr in ("0x1001", "0x1002") and _compile_calls[addr] == 1:
+                    return (False, _retryable_err)
                 return (True, "")
         return (True, "")
 
@@ -4074,7 +4081,9 @@ def test_recovery_complete() -> None:
             "// TARGET: 1 0x1001\n// FILE: b.cpp\nint y;\n// TARGET: 2 0x1002\n// FILE: c.cpp\nint z;\n",
         ]
     )
-    final = _run_target_recovery(initial, funcs, llm, "system")
+    from re_agent.build.transform.subunit_processor import TransformBudget
+
+    final = _run_target_recovery(initial, funcs, llm, "system", TransformBudget())
     assert final.is_complete
     assert final.covered_ordinals == {0, 1, 2}
 
@@ -4096,13 +4105,15 @@ def test_recovery_still_incomplete() -> None:
             "bad",
         ]
     )
-    final = _run_target_recovery(initial, funcs, llm, "system")
+    from re_agent.build.transform.subunit_processor import TransformBudget
+
+    final = _run_target_recovery(initial, funcs, llm, "system", TransformBudget())
     assert not final.is_complete
     assert 2 in final.missing_ordinals
 
 
 def test_recovery_foreign_target_rejected() -> None:
-    """Foreign TARGET â†’ recovery round rejected, initial preserved."""
+    """Foreign TARGET → recovery round rejected, initial preserved."""
     funcs = [_func("0x1000"), _func("0x1001")]
     initial = _analyze_target_coverage(
         [_record("a.cpp", target=(0, "0x1000"))],
@@ -4111,7 +4122,7 @@ def test_recovery_foreign_target_rejected() -> None:
     llm = _SeqProvider(["// TARGET: 5 0xDEAD\n// FILE: bad.cpp\nint bad;\n"])
     import re_agent.build.transform.subunit_processor as sp
 
-    final = sp._run_target_recovery(initial, funcs, llm, "system")
+    final = sp._run_target_recovery(initial, funcs, llm, "system", sp.TransformBudget())
     assert 0 in final.covered_ordinals
     assert not final.is_complete
     assert final.missing_ordinals == {1}

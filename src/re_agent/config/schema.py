@@ -195,7 +195,17 @@ class BuildOptimizationConfig:
     cache_path: str = ".cr-agent-cache.json"
     diagnostics_dir: str = ""
     raw_response_capture: bool = False
-    recovery_token_budget: int = 65536
+    max_llm_calls_per_run: int = 8
+    max_llm_tokens_per_run: int = 150000
+    max_compile_retry_calls_per_run: int = 3
+
+    def __post_init__(self) -> None:
+        if self.max_llm_calls_per_run <= 0:
+            raise ValueError("max_llm_calls_per_run must be > 0")
+        if self.max_llm_tokens_per_run <= 0:
+            raise ValueError("max_llm_tokens_per_run must be > 0")
+        if self.max_compile_retry_calls_per_run < 0:
+            raise ValueError("max_compile_retry_calls_per_run must be >= 0")
 
 
 @dataclass

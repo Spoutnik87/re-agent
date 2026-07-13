@@ -9,9 +9,12 @@ from re_agent.build.state.cache import TransformCache
 from re_agent.build.state.resume import load_state, save_state
 from re_agent.build.transform.context_builder import build_context
 from re_agent.build.transform.subunit_processor import (
+    TransformBudget,
+    _no_persist_json_output,
     _render_system_prompt,
     process_subunit,
 )
+from re_agent.llm.protocol import get_usage
 from re_agent.llm.registry import create_provider
 
 
@@ -45,6 +48,17 @@ def process_modules(
         modules_data = json.load(f)
 
     llm = create_provider(llm_cfg)
+
+    # Snapshot usage at the start of the run for accurate no-persist delta.
+    start_usage = get_usage(llm)
+
+    # Global per-invocation transform budget (shared across ALL subunits).
+    # Use getattr for backward compat with test configs that lack these fields.
+    budget = TransformBudget(
+        calls_remaining=getattr(cfg.optimization, "max_llm_calls_per_run", 8),
+        tokens_remaining=getattr(cfg.optimization, "max_llm_tokens_per_run", 150000),
+        compile_retry_calls_remaining=getattr(cfg.optimization, "max_compile_retry_calls_per_run", 3),
+    )
 
     cache = None
     # --no-persist: never create a cache — it would be written to disk and
@@ -171,7 +185,7 @@ def process_modules(
             # Propagate run_id to diagnostics via subunit context
             if run_id:
                 context["run_id"] = run_id
-            sub_results = process_subunit(context, module_name, llm, cfg, cache, persist=persist)
+            sub_results = process_subunit(context, module_name, llm, cfg, cache, persist=persist, budget=budget)
 
             for r in sub_results:
                 if r.get("compiles") and r.get("files"):
@@ -182,10 +196,11 @@ def process_modules(
                             output_path.write_text(f["content"], encoding="utf-8")
 
                 # Cache the result if caching is enabled and the result is
-                # NOT a NO_OUTPUT verdict (NO_OUTPUT is unreliable and caching
-                # it would prevent retry of functions the model failed to emit
-                # files for).
-                if cache is not None and persist and r.get("verdict") not in ("NO_OUTPUT", "INCOMPLETE_TARGETS"):
+                # NOT a non-retryable verdict (NO_OUTPUT, INCOMPLETE_TARGETS,
+                # BUDGET_EXCEEDED, PROVIDER_ERROR are unreliable or unrecoverable
+                # and caching them would prevent retry).
+                _no_cache_verdicts = frozenset({"NO_OUTPUT", "INCOMPLETE_TARGETS", "BUDGET_EXCEEDED", "PROVIDER_ERROR"})
+                if cache is not None and persist and r.get("verdict") not in _no_cache_verdicts:
                     addr = r["function"]
                     source_for_addr = ""
                     for func in context.get("functions_to_transform", []):
@@ -264,26 +279,12 @@ def process_modules(
         for r in all_results
         if r.get("verdict") == "NO_OUTPUT" and r.get("diagnostic", {}).get("match_strategy") == "rejected_identity"
     )
-    contract_failed = incomplete > 0 or hard_rejects > 0
-    failed = total - passed - incomplete - hard_rejects
+    budget_exceeds = sum(1 for r in all_results if r.get("verdict") == "BUDGET_EXCEEDED")
+    provider_errors = sum(1 for r in all_results if r.get("verdict") == "PROVIDER_ERROR")
+    contract_failed = incomplete > 0 or hard_rejects > 0 or budget_exceeds > 0 or provider_errors > 0
+    exit_code = 2 if budget_exceeds or contract_failed else (1 if incomplete > 0 or hard_rejects > 0 else 0)
+    failed = total - passed - incomplete - hard_rejects - budget_exceeds - provider_errors
     total_tokens = llm.total_prompt_tokens + llm.total_completion_tokens
-
-    report = {
-        "results": all_results,
-        "summary": {
-            "total": total,
-            "passed": passed,
-            "failed": failed,
-            "incomplete": incomplete,
-            "hard_rejects": hard_rejects,
-            "contract_failed": contract_failed,
-            "total_tokens": total_tokens,
-        },
-    }
-
-    if persist:
-        with open(Path(cfg.output.work_dir) / "cr-agent-report.json", "w", encoding="utf-8") as f:
-            json.dump(report, f, indent=2)
 
     summary_result: dict[str, Any] = {
         "total": total,
@@ -291,7 +292,36 @@ def process_modules(
         "failed": failed,
         "incomplete": incomplete,
         "hard_rejects": hard_rejects,
+        "budget_exceeded": budget_exceeds,
+        "provider_errors": provider_errors,
         "contract_failed": contract_failed,
         "total_tokens": total_tokens,
     }
+    if budget:
+        summary_result["budget"] = budget.to_dict()
+    budget_obj = budget
+
+    if not persist:
+        # --no-persist: write ONLY the JSON to stdout, no human banner/footer
+        # Use real start/end usage snapshots for accurate delta reporting.
+        end_usage = get_usage(llm)
+        _no_persist_json_output(
+            all_results,
+            budget_obj,
+            start_usage,
+            end_usage,
+            exit_code=exit_code,
+        )
+        # Return summary without results for backward compat
+        return summary_result
+
+    # persist=True: write report file and return summary
+    report = {
+        "results": all_results,
+        "summary": summary_result,
+    }
+
+    with open(Path(cfg.output.work_dir) / "cr-agent-report.json", "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+
     return summary_result
