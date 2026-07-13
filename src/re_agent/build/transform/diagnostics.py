@@ -35,7 +35,17 @@ __all__ = [
     "write_diagnostics",
 ]
 
-_VALID_MATCH_STRATEGIES = frozenset({"single_function", "by_name", "by_address", "single_file_fallback", "none"})
+_VALID_MATCH_STRATEGIES = frozenset(
+    {
+        "single_function",
+        "by_name",
+        "by_address",
+        "single_file_fallback",
+        "none",
+        "explicit_identity",
+        "rejected_identity",
+    }
+)
 
 # Maximum length for captured compiler stderr. Stderr longer than this is
 # deterministically truncated to preserve first KEEP_HEAD chars and last
@@ -200,6 +210,19 @@ class FunctionVerdict:
     ``compile_error_category`` is a coarse classification of the compile
     error via ``classify_compile_error``. It is ``None`` when
     ``compile_error`` is ``None``.
+
+    ``identity_state`` describes the association method:
+    - ``"explicit"`` — matched via ``// TARGET:`` explicit identity markers.
+    - ``"matched"`` — matched via direct address/name matching.
+    - ``"rejected"`` — explicit identity was present but invalid.
+    - ``"none"`` — no files matched to this function.
+
+    ``identity_reason`` provides a human-readable explanation when the
+    identity was rejected or no match was found. It is empty on success.
+
+    ``target_file_count`` is the number of files explicitly associated
+    with this function's target grouping (via ``// TARGET:`` or equivalent).
+    For non-explicit strategies it equals ``files_matched``.
     """
 
     address: str
@@ -212,6 +235,9 @@ class FunctionVerdict:
     candidate_has_name: tuple[bool, ...] = ()
     compile_error: str | None = None
     compile_error_category: str | None = None
+    identity_state: str = ""
+    identity_reason: str = ""
+    target_file_count: int = 0
 
     def __post_init__(self) -> None:
         if (self.compile_error is None) != (self.compile_error_category is None):
@@ -229,6 +255,9 @@ class FunctionVerdict:
             "candidate_has_name": list(self.candidate_has_name),
             "compile_error": self.compile_error,
             "compile_error_category": self.compile_error_category,
+            "identity_state": self.identity_state,
+            "identity_reason": self.identity_reason,
+            "target_file_count": self.target_file_count,
         }
 
 

@@ -195,6 +195,7 @@ class BuildOptimizationConfig:
     cache_path: str = ".cr-agent-cache.json"
     diagnostics_dir: str = ""
     raw_response_capture: bool = False
+    recovery_token_budget: int = 65536
 
 
 @dataclass
@@ -205,6 +206,7 @@ class ValidationConfig:
     compile_per_module: bool = True
     compile_final_project: bool = True
     max_compile_retries: int = 2
+    target_contract_mode: str = "legacy"  # "legacy" or "required"
 
 
 @dataclass

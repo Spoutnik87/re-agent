@@ -14,7 +14,7 @@ Transform the following decompiled functions from the **{{ module_name }}** modu
 ## Functions to Transform
 
 {% for func in functions %}
-### Function {{ func.address }}
+### Function [{{ loop.index0 }}] {{ func.address }}
 ```cpp
 {{ func.code }}
 ```
@@ -22,21 +22,33 @@ Transform the following decompiled functions from the **{{ module_name }}** modu
 
 ## Expected Output Format
 
-For each function, produce. The original function address is the stable identity — you MUST include it in every `// FILE:` path.
+For each function, produce files with an explicit target identity comment before every `// FILE:` block. The `// TARGET:` line declares which function the file belongs to using the function's ordinal index in the list (starting at 0) and its original address.
 
 ```
+// TARGET: 0 0x004117c0
 // FILE: include/<module>/0x004117c0__<descriptive_name>.h
 // Original function: 0x004117c0
 #pragma once
 // ... header content with include guard, declarations, address comments ...
 
+// TARGET: 0 0x004117c0
 // FILE: src/<module>/0x004117c0__<descriptive_name>.cpp
 #include "_decls.h"
 // Original function: 0x004117c0
 // ... implementation ...
 ```
 
-Include ALL functions. Do not skip any. The `0x...` prefix in the FILE path is the stable identity — NEVER omit or rename it away. Follow all conventions from the system prompt.
+For a multi-function subunit, each function's files must be preceded by its own `// TARGET:` with the correct ordinal and address:
+
+```
+// TARGET: 1 0x00411800
+// FILE: src/<module>/0x00411800__<descriptive_name>.cpp
+#include "_decls.h"
+// Original function: 0x00411800
+// ... implementation ...
+```
+
+Include ALL functions. Do not skip any. The `0x...` prefix in the FILE path is the stable identity — NEVER omit or rename it away. The `// TARGET:` comment is the primary identity marker that maps each file to its function — it MUST appear on its own line before each `// FILE:` block. Follow all conventions from the system prompt.
 
 ## Critical: `_decls.h` Include Requirement
 

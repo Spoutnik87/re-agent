@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from re_agent.config.loader import load_config
@@ -15,9 +16,23 @@ def cmd_build(args: argparse.Namespace) -> int:
     llm_cfg = config.llm
     pipeline_cfg = config.pipeline
 
-    state = PipelineState(pipeline_cfg.state_file)
+    persist = not getattr(args, "no_persist", False)
 
+    # --no-persist is only valid with an explicit --phase transform.
+    # With --phase analyze, --phase assemble, or no --phase (which runs
+    # all phases including analyze/assemble), --no-persist would silently
+    # skip writes — this is a user error.
     phase = getattr(args, "phase", None)
+    if not persist and phase != "transform":
+        phase_label = phase if phase else "(all phases)"
+        print(
+            f"Error: --no-persist is only valid with --phase transform (got --phase {phase_label})",
+            file=sys.stderr,
+        )
+        return 2
+
+    state = PipelineState(pipeline_cfg.state_file) if persist else None
+
     phases = [phase] if phase else ["analyze", "transform", "assemble"]
 
     from re_agent.build.analyze.clusterer import cluster
@@ -25,6 +40,9 @@ def cmd_build(args: argparse.Namespace) -> int:
     from re_agent.build.analyze.indexer import index_modules
     from re_agent.build.assemble.tree_builder import build_tree
     from re_agent.build.transform.module_processor import process_modules
+
+    has_incomplete = False
+    contract_failed = False
 
     try:
         if "analyze" in phases:
@@ -41,7 +59,8 @@ def cmd_build(args: argparse.Namespace) -> int:
             mc = modules["metadata"]["module_count"]
             oc = modules["metadata"]["orphan_count"]
             print(f"Analyze complete: {mc} modules, {oc} orphans")
-            state.update_build("in_progress", phase="analyze", modules_completed=[])
+            if persist and state is not None:
+                state.update_build("in_progress", phase="analyze", modules_completed=[])
 
         if "transform" in phases:
             print("=== Phase 2/3: Transform (LLM code refinement) ===")
@@ -52,27 +71,59 @@ def cmd_build(args: argparse.Namespace) -> int:
                 subunit=getattr(args, "subunit", None),
                 max_subunits=getattr(args, "max_subunits", None),
                 run_id=getattr(args, "run_id", "") or "",
+                persist=persist,
             )
-            state.update_build("in_progress", phase="transform", modules_completed=[])
+            if persist and state is not None:
+                state.update_build("in_progress", phase="transform", modules_completed=[])
 
             total = summary.get("total", 0)
             passed = summary.get("passed", 0)
+            incomplete = summary.get("incomplete", 0)
+            contract_failed = summary.get("contract_failed", False)
+
             if total > 0 and passed > 0:
-                print(f"Transform complete: {passed}/{total} functions compiled successfully")
+                parts = [f"{passed}/{total} functions compiled"]
+                if incomplete:
+                    parts.append(f"{incomplete} incomplete targets")
+                    has_incomplete = True
+                print(f"Transform complete: {', '.join(parts)}")
             elif total > 0 and passed == 0:
-                print(f"Transform complete: 0/{total} functions compiled — see report for details")
+                if contract_failed:
+                    msg = (
+                        f"CONTRACT FAILED — {incomplete}/{total} functions have INCOMPLETE_TARGETS "
+                        "(TARGET contract required but recovery exhausted)"
+                    )
+                    print(f"Transform rejected: {msg}")
+                    has_incomplete = True
+                elif incomplete:
+                    msg = f"{incomplete}/{total} functions have INCOMPLETE_TARGETS — recovery exhausted"
+                    print(f"Transform complete: {msg}")
+                    has_incomplete = True
+                else:
+                    print(f"Transform complete: 0/{total} functions compiled — see report for details")
             else:
                 print("Transform complete: no functions processed")
-
         if "assemble" in phases:
-            print("=== Phase 3/3: Assemble (project tree) ===")
-            build_tree(build_cfg)
-            state.update_build("completed")
+            if contract_failed or has_incomplete:
+                print("Skipping assemble: contract failed (TARGET violations).")
+            else:
+                print("=== Phase 3/3: Assemble (project tree) ===")
+                build_tree(build_cfg)
+                if persist and state is not None:
+                    state.update_build("completed")
     except Exception:
-        state.update_build("failed")
-        state.flush()
+        if persist and state is not None:
+            state.update_build("failed")
+            state.flush()
         raise
 
-    state.flush()
+    if persist and state is not None:
+        state.flush()
+
+    if contract_failed or has_incomplete:
+        code = 2 if contract_failed else 1
+        label = "CONTRACT FAILED" if contract_failed else "INCOMPLETE"
+        print(f"Build {label}: TARGET requirements not met.")
+        return code
     print("Build complete.")
     return 0

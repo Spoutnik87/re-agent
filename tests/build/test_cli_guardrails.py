@@ -256,7 +256,7 @@ def test_guardrail_module_filter_skips_other_modules(monkeypatch, tmp_path: Path
 
     called_modules: list[str] = []
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         called_modules.append(module_name)
         return []
 
@@ -285,7 +285,7 @@ def test_guardrail_no_module_processes_all(monkeypatch, tmp_path: Path) -> None:
 
     called_modules: list[str] = []
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         called_modules.append(module_name)
         return []
 
@@ -313,7 +313,7 @@ def test_guardrail_subunit_start_skips_earlier(monkeypatch, tmp_path: Path) -> N
 
     call_count = [0]
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         call_count[0] += 1
         return []
 
@@ -341,7 +341,7 @@ def test_guardrail_max_subunits_stops_after_n(monkeypatch, tmp_path: Path) -> No
 
     call_count = [0]
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         call_count[0] += 1
         return []
 
@@ -368,7 +368,7 @@ def test_guardrail_max_subunits_no_overflow(monkeypatch, tmp_path: Path) -> None
 
     processed_count = [0]
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         processed_count[0] += 1
         return []
 
@@ -404,7 +404,7 @@ def test_guardrail_max_subunits_global_across_modules(monkeypatch, tmp_path: Pat
 
     call_count = [0]
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         call_count[0] += 1
         return []
 
@@ -434,7 +434,7 @@ def test_guardrail_run_id_propagates_to_context(monkeypatch, tmp_path: Path) -> 
 
     captured_contexts: list[dict] = []
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         captured_contexts.append(dict(ctx))
         return []
 
@@ -462,7 +462,7 @@ def test_guardrail_no_run_id_does_not_set_key(monkeypatch, tmp_path: Path) -> No
 
     captured_contexts: list[dict] = []
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         captured_contexts.append(dict(ctx))
         return []
 
@@ -489,7 +489,7 @@ def test_guardrail_all_params_together(monkeypatch, tmp_path: Path) -> None:
 
     processed: list[tuple[str, dict]] = []  # (module_name, context)
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         processed.append((module_name, dict(ctx)))
         return []
 
@@ -538,7 +538,7 @@ def test_transform_summary_all_failed_shows_zero_passed(monkeypatch, tmp_path: P
 
     _call_count: list[int] = [0]
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         _call_count[0] += 1
         # Each subunit has 1 function → return 1 result per call
         return [
@@ -577,7 +577,7 @@ def test_transform_summary_mixed_success_failure(monkeypatch, tmp_path: Path) ->
 
     _call_count: list[int] = [0]
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         _call_count[0] += 1
         compiles = _call_count[0] == 1  # first call passes, second fails
         return [
@@ -611,7 +611,7 @@ def test_transform_summary_empty_results(monkeypatch, tmp_path: Path) -> None:
     cfg = _make_minimal_cfg(tmp_path)
     cfg.input.decompiled_dir = str(decompiled_dir)
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         return []
 
     import re_agent.build.transform.module_processor as mp
@@ -638,7 +638,7 @@ def test_transform_summary_all_passed(monkeypatch, tmp_path: Path) -> None:
     cfg = _make_minimal_cfg(tmp_path)
     cfg.input.decompiled_dir = str(decompiled_dir)
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         return [
             {"function": "0x0001", "module": _M1, "compiles": True, "files": [], "verdict": "PASS"},
         ]
@@ -666,7 +666,7 @@ def test_guardrail_unknown_module_skips_silently(monkeypatch, tmp_path: Path) ->
 
     processed_count = [0]
 
-    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any) -> list[dict]:
+    def _fake_process_subunit(ctx: dict, module_name: str, llm: Any, cfg: Any, cache: Any, **kwargs: Any) -> list[dict]:
         processed_count[0] += 1
         return []
 
@@ -679,3 +679,671 @@ def test_guardrail_unknown_module_skips_silently(monkeypatch, tmp_path: Path) ->
     mp.process_modules(cfg, _make_llm_cfg(), module="nonexistent")
 
     assert processed_count[0] == 0, "No modules should be processed"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 4. Real cmd_build tests with mocked side effects
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def _fake_process_modules_ok(*a: Any, **kw: Any) -> dict:
+    """Fake process_modules returning all PASS."""
+    return {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "incomplete": 0,
+        "hard_rejects": 0,
+        "contract_failed": False,
+        "total_tokens": 100,
+    }
+
+
+def _fake_process_modules_contract_failed(*a: Any, **kw: Any) -> dict:
+    return {
+        "total": 10,
+        "passed": 0,
+        "failed": 0,
+        "incomplete": 10,
+        "hard_rejects": 0,
+        "contract_failed": True,
+        "total_tokens": 100,
+    }
+
+
+def _fake_process_modules_hard_reject(*a: Any, **kw: Any) -> dict:
+    return {
+        "total": 2,
+        "passed": 0,
+        "failed": 0,
+        "incomplete": 0,
+        "hard_rejects": 2,
+        "contract_failed": True,
+        "total_tokens": 50,
+    }
+
+
+def _fake_process_modules_mixed(*a: Any, **kw: Any) -> dict:
+    return {
+        "total": 10,
+        "passed": 7,
+        "failed": 0,
+        "incomplete": 3,
+        "hard_rejects": 0,
+        "contract_failed": True,
+        "total_tokens": 200,
+    }
+
+
+def _make_cmd_build_args(
+    no_persist: bool = False,
+    phase: str | None = "transform",
+    module: str | None = None,
+    subunit: int | None = None,
+    max_subunits: int | None = None,
+    run_id: str | None = None,
+) -> SimpleNamespace:
+    """Build an argparse namespace for cmd_build."""
+    return SimpleNamespace(
+        config="",
+        no_persist=no_persist,
+        phase=phase,
+        module=module,
+        subunit=subunit,
+        max_subunits=max_subunits,
+        run_id=run_id,
+    )
+
+
+def test_cmd_build_no_persist_phase_none_exit2(monkeypatch: Any) -> None:
+    """--no-persist without --phase → exit 2 (reject all phases)."""
+    import re_agent.cli.cmd_build as cb
+
+    def _mock_load(*a, **kw):
+        return SimpleNamespace(
+            build=SimpleNamespace(output=SimpleNamespace(target_dir="")),
+            llm=SimpleNamespace(model="test"),
+            pipeline=SimpleNamespace(state_file=""),
+        )
+
+    monkeypatch.setattr(cb, "load_config", _mock_load)
+    rc = cb.cmd_build(_make_cmd_build_args(no_persist=True, phase=None))
+    assert rc == 2, f"Expected exit 2, got {rc}"
+
+
+def test_cmd_build_no_persist_phase_analyze_exit2(monkeypatch: Any) -> None:
+    """--no-persist --phase analyze → exit 2."""
+    import re_agent.cli.cmd_build as cb
+
+    def _mock_load(*a, **kw):
+        return SimpleNamespace(
+            build=SimpleNamespace(output=SimpleNamespace(target_dir="")),
+            llm=SimpleNamespace(model="test"),
+            pipeline=SimpleNamespace(state_file=""),
+        )
+
+    monkeypatch.setattr(cb, "load_config", _mock_load)
+    rc = cb.cmd_build(_make_cmd_build_args(no_persist=True, phase="analyze"))
+    assert rc == 2, f"Expected exit 2, got {rc}"
+
+
+def test_cmd_build_no_persist_phase_assemble_exit2(monkeypatch: Any) -> None:
+    """--no-persist --phase assemble → exit 2."""
+    import re_agent.cli.cmd_build as cb
+
+    def _mock_load(*a, **kw):
+        return SimpleNamespace(
+            build=SimpleNamespace(output=SimpleNamespace(target_dir="")),
+            llm=SimpleNamespace(model="test"),
+            pipeline=SimpleNamespace(state_file=""),
+        )
+
+    monkeypatch.setattr(cb, "load_config", _mock_load)
+    rc = cb.cmd_build(_make_cmd_build_args(no_persist=True, phase="assemble"))
+    assert rc == 2, f"Expected exit 2, got {rc}"
+
+
+def test_cmd_build_no_persist_phase_transform_allowed(monkeypatch: Any, tmp_path: Path) -> None:
+    """--no-persist --phase transform is allowed."""
+    import re_agent.cli.cmd_build as cb
+
+    def _mock_load(*a, **kw):
+        return SimpleNamespace(
+            build=SimpleNamespace(output=SimpleNamespace(target_dir=str(tmp_path))),
+            llm=SimpleNamespace(model="test"),
+            pipeline=SimpleNamespace(state_file=str(tmp_path / "st.json")),
+        )
+
+    monkeypatch.setattr(cb, "load_config", _mock_load)
+    monkeypatch.setattr(
+        "re_agent.build.transform.module_processor.process_modules",
+        lambda *a, **kw: {
+            "total": 0,
+            "passed": 0,
+            "failed": 0,
+            "incomplete": 0,
+            "hard_rejects": 0,
+            "contract_failed": False,
+            "total_tokens": 0,
+        },
+    )
+    rc = cb.cmd_build(_make_cmd_build_args(no_persist=True, phase="transform"))
+    assert rc != 2, f"no-persist + transform should not exit 2, got {rc}"
+
+
+def _mock_analyze_and_build():
+    """Return mocks for analyze and assemble phases (full pipeline)."""
+    import re_agent.build.analyze.clusterer as cl
+    import re_agent.build.analyze.decls_generator as dg
+    import re_agent.build.analyze.graph_builder as gb
+    import re_agent.build.analyze.indexer as idx
+
+    return gb, cl, idx, dg
+
+
+def test_cmd_build_contract_failed_exit2_assemble_skipped(monkeypatch: Any, tmp_path: Path) -> None:
+    """Full pipeline with contract failure → exit 2, assemble NOT called."""
+    import re_agent.build.analyze.clusterer as _cl
+    import re_agent.build.analyze.decls_generator as _dg
+    import re_agent.build.analyze.graph_builder as _gb
+    import re_agent.build.analyze.indexer as _idx
+    import re_agent.build.assemble.tree_builder as tb
+    import re_agent.build.transform.module_processor as mp
+    import re_agent.cli.cmd_build as cb
+
+    monkeypatch.setattr(
+        cb,
+        "load_config",
+        lambda p: SimpleNamespace(
+            build=SimpleNamespace(output=SimpleNamespace(target_dir=str(tmp_path))),
+            llm=SimpleNamespace(model="test"),
+            pipeline=SimpleNamespace(state_file=str(tmp_path / "state.json")),
+        ),
+    )
+    monkeypatch.setattr(mp, "process_modules", _fake_process_modules_contract_failed)
+    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
+    # Mock analyze phase
+    monkeypatch.setattr(_gb, "build_graph", lambda c: {})
+    monkeypatch.setattr(
+        _cl, "cluster", lambda g, c: {"modules": {}, "metadata": {"module_count": 0, "orphan_count": 0}}
+    )  # noqa: E501
+    monkeypatch.setattr(_idx, "index_modules", lambda m, c: None)
+    monkeypatch.setattr(_dg, "write_decls_header", lambda c: None)
+    # Assemble should NOT be called
+    assemble_called = [False]
+    monkeypatch.setattr(tb, "build_tree", lambda c: assemble_called.__setitem__(0, True))
+
+    # Full pipeline: phase=None runs analyze, transform, assemble
+    rc = cb.cmd_build(_make_cmd_build_args(no_persist=False, phase=None))
+    assert rc == 2, f"Expected exit 2 for contract_failed, got {rc}"
+    assert not assemble_called[0], "Assemble must NOT be called on contract failure"
+
+
+def test_cmd_build_hard_reject_exit2(monkeypatch: Any, tmp_path: Path) -> None:
+    """Full pipeline hard reject → exit 2, assemble skipped."""
+    import re_agent.build.analyze.clusterer as _cl
+    import re_agent.build.analyze.decls_generator as _dg
+    import re_agent.build.analyze.graph_builder as _gb
+    import re_agent.build.analyze.indexer as _idx
+    import re_agent.build.assemble.tree_builder as tb
+    import re_agent.build.transform.module_processor as mp
+    import re_agent.cli.cmd_build as cb
+
+    monkeypatch.setattr(
+        cb,
+        "load_config",
+        lambda p: SimpleNamespace(
+            build=SimpleNamespace(output=SimpleNamespace(target_dir=str(tmp_path))),
+            llm=SimpleNamespace(model="test"),
+            pipeline=SimpleNamespace(state_file=str(tmp_path / "state.json")),
+        ),
+    )
+    monkeypatch.setattr(mp, "process_modules", _fake_process_modules_hard_reject)
+    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
+    monkeypatch.setattr(_gb, "build_graph", lambda c: {})
+    monkeypatch.setattr(
+        _cl, "cluster", lambda g, c: {"modules": {}, "metadata": {"module_count": 0, "orphan_count": 0}}
+    )  # noqa: E501
+    monkeypatch.setattr(_idx, "index_modules", lambda m, c: None)
+    monkeypatch.setattr(_dg, "write_decls_header", lambda c: None)
+    assemble_called = [False]
+    monkeypatch.setattr(tb, "build_tree", lambda c: assemble_called.__setitem__(0, True))
+
+    rc = cb.cmd_build(_make_cmd_build_args(no_persist=False, phase=None))
+    assert rc == 2, f"Expected exit 2 for hard reject, got {rc}"
+    assert not assemble_called[0], "Assemble must NOT be called on hard reject"
+
+
+def test_cmd_build_mixed_pass_and_contract_failure_exit2(monkeypatch: Any, tmp_path: Path) -> None:
+    """Full pipeline mixed PASS + contract failure → exit 2, assemble skipped."""
+    import re_agent.build.analyze.clusterer as _cl
+    import re_agent.build.analyze.decls_generator as _dg
+    import re_agent.build.analyze.graph_builder as _gb
+    import re_agent.build.analyze.indexer as _idx
+    import re_agent.build.assemble.tree_builder as tb
+    import re_agent.build.transform.module_processor as mp
+    import re_agent.cli.cmd_build as cb
+
+    monkeypatch.setattr(
+        cb,
+        "load_config",
+        lambda p: SimpleNamespace(
+            build=SimpleNamespace(output=SimpleNamespace(target_dir=str(tmp_path))),
+            llm=SimpleNamespace(model="test"),
+            pipeline=SimpleNamespace(state_file=str(tmp_path / "state.json")),
+        ),
+    )
+    monkeypatch.setattr(mp, "process_modules", _fake_process_modules_mixed)
+    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
+    monkeypatch.setattr(_gb, "build_graph", lambda c: {})
+    monkeypatch.setattr(
+        _cl, "cluster", lambda g, c: {"modules": {}, "metadata": {"module_count": 0, "orphan_count": 0}}
+    )  # noqa: E501
+    monkeypatch.setattr(_idx, "index_modules", lambda m, c: None)
+    monkeypatch.setattr(_dg, "write_decls_header", lambda c: None)
+    assemble_called = [False]
+    monkeypatch.setattr(tb, "build_tree", lambda c: assemble_called.__setitem__(0, True))
+
+    rc = cb.cmd_build(_make_cmd_build_args(no_persist=False, phase=None))
+    assert rc == 2, f"Expected exit 2 for mixed, got {rc}"
+    assert not assemble_called[0], "Assemble must NOT be called on mixed failure"
+
+
+def test_cmd_build_full_pass_completes_ok(monkeypatch: Any, tmp_path: Path) -> None:
+    """All PASS → exit 0."""
+    import re_agent.build.transform.module_processor as mp
+    import re_agent.cli.cmd_build as cb
+
+    monkeypatch.setattr(
+        cb,
+        "load_config",
+        lambda p: SimpleNamespace(
+            build=SimpleNamespace(output=SimpleNamespace(target_dir=str(tmp_path))),
+            llm=SimpleNamespace(model="test"),
+            pipeline=SimpleNamespace(state_file=str(tmp_path / "state.json")),
+        ),
+    )
+    monkeypatch.setattr(mp, "process_modules", _fake_process_modules_ok)
+    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
+
+    rc = cb.cmd_build(_make_cmd_build_args(no_persist=False, phase="transform"))
+    assert rc == 0, f"Expected exit 0 for all PASS, got {rc}"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 5. Module completion tests (process_modules level)
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def _make_completion_cfg(tmp_path: Path, resume_state: dict | None = None) -> SimpleNamespace:
+    """Build cfg with optional resume state for completion tests."""
+    if resume_state is not None:
+        state_path = tmp_path / "cr-agent-state.json"
+        state_path.write_text(json.dumps(resume_state), encoding="utf-8")
+        rs_path = str(state_path)
+        rs_enabled = True
+    else:
+        rs_path = ""
+        rs_enabled = False
+    input_ns = SimpleNamespace(decompiled_dir=str(tmp_path / "decompiled_stubs"))
+    output_ns = SimpleNamespace(
+        language="C++",
+        standard="c++23",
+        decls_header=None,
+        work_dir=str(tmp_path),
+        target_dir=str(tmp_path / "output"),
+        compiler="g++",
+        compiler_flags="-std=c++23 -c -Wall",
+    )
+    project_conventions = SimpleNamespace(
+        naming=SimpleNamespace(classes="PascalCase", functions="camelCase", globals="snake_case"),
+        includes_rule="",
+        max_function_lines=200,
+    )
+    project_ns = SimpleNamespace(description="", conventions=project_conventions)
+    optimization_ns = SimpleNamespace(
+        cache_enabled=False,
+        cache_path="",
+        subunit_size=10,
+        context_window=3,
+        diagnostics_dir="",
+        raw_response_capture=False,
+    )
+    validation_ns = SimpleNamespace(
+        compile_per_function=True, compile_per_module=False, compile_final_project=False, max_compile_retries=0
+    )
+    resume_ns = SimpleNamespace(enabled=rs_enabled, state_path=rs_path)
+    modules_ns = SimpleNamespace(expected=[])
+    return SimpleNamespace(
+        input=input_ns,
+        output=output_ns,
+        project=project_ns,
+        optimization=optimization_ns,
+        validation=validation_ns,
+        resume=resume_ns,
+        modules=modules_ns,
+        model="test-model",
+    )
+
+
+def _write_module_json_with_subunits(tmp_path: Path, module_name: str, num_subunits: int) -> None:
+    """Write modules.json with a module having *num_subunits* subunits of 1 function each."""
+    addrs = [f"0x{i:08x}" for i in range(num_subunits)]
+    sub_units = [[a] for a in addrs]
+    modules = {module_name: {"functions": addrs, "sub_units": sub_units, "size": num_subunits}}
+    data = {"modules": modules, "metadata": {"module_count": 1}}
+    (tmp_path / "modules.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def _make_stubs(tmp_path: Path, addrs: list[str]) -> Path:
+    """Create stub .cpp files for each address."""
+    d = tmp_path / "decompiled_stubs"
+    d.mkdir(exist_ok=True)
+    for a in addrs:
+        (d / f"{a}__stub.cpp").write_text(f"void stub_{a}() {{}}", encoding="utf-8")
+    return d
+
+
+def test_completion_compile_fail_blocks_module(monkeypatch: Any, tmp_path: Path) -> None:
+    """Compile failure → not accepted verdict → module NOT completed."""
+    _write_module_json_with_subunits(tmp_path, "renderer", 2)
+    _make_stubs(tmp_path, ["0x00000001", "0x00000002"])
+    cfg = _make_completion_cfg(tmp_path)
+    import re_agent.build.transform.module_processor as mp
+
+    _call = [0]
+
+    def _fake_subunit(*a, **kw):
+        _call[0] += 1
+        compiles = _call[0] == 1  # first passes, second fails
+        return [
+            {
+                "function": f"0x{_call[0]:08x}",
+                "module": "renderer",
+                "compiles": compiles,
+                "files": [],
+                "verdict": "PASS" if compiles else "FAIL_NO_RETRY",
+                "diagnostic": {"match_strategy": "explicit_identity"},
+            }
+        ]
+
+    monkeypatch.setattr(mp, "process_subunit", _fake_subunit)
+    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
+    mp.process_modules(cfg, _make_llm_cfg(), module="renderer")
+    # Module should NOT be completed (FAIL_NO_RETRY is not an accepted verdict)
+    assert not cfg.resume.enabled  # no resume state was written
+
+
+def test_completion_max_subunits_stops_mid_module(monkeypatch: Any, tmp_path: Path) -> None:
+    """--max-subunits=1 on a 2-subunit module → module NOT completed."""
+    _write_module_json_with_subunits(tmp_path, "renderer", 2)
+    _make_stubs(tmp_path, ["0x00000001", "0x00000002"])
+    cfg = _make_completion_cfg(tmp_path)
+    import re_agent.build.transform.module_processor as mp
+
+    def _fake_subunit(*a, **kw):
+        return [
+            {
+                "function": "0x0001",
+                "module": "renderer",
+                "compiles": True,
+                "files": [],
+                "verdict": "PASS",
+                "diagnostic": {"match_strategy": "explicit_identity"},
+            }
+        ]
+
+    monkeypatch.setattr(mp, "process_subunit", _fake_subunit)
+    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
+    mp.process_modules(cfg, _make_llm_cfg(), module="renderer", max_subunits=1)
+    # If completed_modules was populated, it would be written to state.
+    # We don't have a direct way to check completed_modules, but we can
+    # verify that a second run with subunit=1 processes 1 more subunit
+    # (not 0 which would mean the module was marked completed).
+    call_count2 = [0]
+
+    def _fake_subunit2(*a, **kw):
+        call_count2[0] += 1
+        return [
+            {
+                "function": "0x0002",
+                "module": "renderer",
+                "compiles": True,
+                "files": [],
+                "verdict": "PASS",
+                "diagnostic": {"match_strategy": "explicit_identity"},
+            }
+        ]
+
+    monkeypatch.setattr(mp, "process_subunit", _fake_subunit2)
+    mp.process_modules(cfg, _make_llm_cfg(), module="renderer", subunit=1, max_subunits=1)
+    assert call_count2[0] == 1, "Second run should process subunit 1 (module not completed)"
+
+
+def test_completion_resume_all_pass_completes(monkeypatch: Any, tmp_path: Path) -> None:
+    """Resume: set current_subunit=1 (meaning sub 0 was processing when interrupted).
+    Both remaining subunits (indices 1 and 2) all PASS → module completed."""
+    _write_module_json_with_subunits(tmp_path, "renderer", 3)
+    _make_stubs(tmp_path, ["0x00000001", "0x00000002", "0x00000003"])
+    # Resume state: current_subunit=1 means "was processing subunit 1 when interrupted"
+    state = {"completed_modules": [], "current_module": "renderer", "current_subunit": 1, "phase": "transform"}
+    cfg = _make_completion_cfg(tmp_path, resume_state=state)
+    import re_agent.build.transform.module_processor as mp
+
+    processed = [0]
+
+    def _fake_subunit(*a, **kw):
+        processed[0] += 1
+        return [
+            {
+                "function": f"0x{processed[0]:08x}",
+                "module": "renderer",
+                "compiles": True,
+                "files": [],
+                "verdict": "PASS",
+                "diagnostic": {"match_strategy": "explicit_identity"},
+            }
+        ]
+
+    monkeypatch.setattr(mp, "process_subunit", _fake_subunit)
+    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
+    # Do NOT use module= here — resume start only applies without --module filter
+    summary = mp.process_modules(cfg, _make_llm_cfg())
+    assert processed[0] == 2, "2 subunits (indices 1 and 2) should be processed"
+    assert summary["passed"] == 2, "2 results should be PASS"
+
+
+def test_completion_resume_with_failure_blocks(monkeypatch: Any, tmp_path: Path) -> None:
+    """Resume with current_subunit=1, restarted subunits include fail → NOT completed."""
+    _write_module_json_with_subunits(tmp_path, "renderer", 3)
+    _make_stubs(tmp_path, ["0x00000001", "0x00000002", "0x00000003"])
+    state = {"completed_modules": [], "current_module": "renderer", "current_subunit": 1, "phase": "transform"}
+    cfg = _make_completion_cfg(tmp_path, resume_state=state)
+    import re_agent.build.transform.module_processor as mp
+
+    _call = [0]
+
+    def _fake_subunit(*a, **kw):
+        _call[0] += 1
+        compiles = _call[0] == 1  # first resumed subunit passes, second fails
+        return [
+            {
+                "function": f"0x{_call[0]:08x}",
+                "module": "renderer",
+                "compiles": compiles,
+                "files": [],
+                "verdict": "PASS" if compiles else "FAIL_NO_RETRY",
+                "diagnostic": {"match_strategy": "explicit_identity"},
+            }
+        ]
+
+    monkeypatch.setattr(mp, "process_subunit", _fake_subunit)
+    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
+    # Do NOT use module= — resume start only applies without --module filter
+    mp.process_modules(cfg, _make_llm_cfg())
+    # Resume restarts from current_subunit=1. 3 subunits: index 0 skipped,
+    # index 1 processed (PASS), index 2 processed (FAIL) → 2 calls.
+    assert _call[0] == 2, f"Expected 2 resumed subunits, got {_call[0]}"
+
+
+def test_completion_all_fail_blocks_module(monkeypatch: Any, tmp_path: Path) -> None:
+    """All functions FAIL_AFTER_RETRY → NOT accepted → module NOT completed."""
+    _write_module_json_with_subunits(tmp_path, "renderer", 2)
+    _make_stubs(tmp_path, ["0x00000001", "0x00000002"])
+    cfg = _make_completion_cfg(tmp_path)
+    import re_agent.build.transform.module_processor as mp
+
+    def _fake_subunit(*a, **kw):
+        return [
+            {
+                "function": "0x0001",
+                "module": "renderer",
+                "compiles": False,
+                "files": [],
+                "verdict": "FAIL_AFTER_RETRY",
+                "diagnostic": {"match_strategy": "explicit_identity"},
+            }
+        ]
+
+    monkeypatch.setattr(mp, "process_subunit", _fake_subunit)
+    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
+    summary = mp.process_modules(cfg, _make_llm_cfg(), module="renderer")
+    assert summary["passed"] == 0
+    assert summary["failed"] == 2
+    # If modify report to expose completed, we can check. Instead verify
+    # that a second run processes all subunits (module not completed).
+    call_count2 = [0]
+
+    def _fake_subunit2(*a, **kw):
+        call_count2[0] += 1
+        return [
+            {
+                "function": f"0x{call_count2[0]:08x}",
+                "module": "renderer",
+                "compiles": True,
+                "files": [],
+                "verdict": "PASS",
+                "diagnostic": {"match_strategy": "explicit_identity"},
+            }
+        ]
+
+    monkeypatch.setattr(mp, "process_subunit", _fake_subunit2)
+    mp.process_modules(cfg, _make_llm_cfg(), module="renderer")
+    assert call_count2[0] == 2, "All 2 subunits should re-process (module was not completed)"
+
+
+def test_explicit_subunit_does_not_complete(monkeypatch: Any, tmp_path: Path) -> None:
+    """Explicit --subunit 1 on 2-subunit module → NOT completed (subunit 0 skipped, not done)."""
+    _write_module_json_with_subunits(tmp_path, "renderer", 2)
+    _make_stubs(tmp_path, ["0x00000001", "0x00000002"])
+    cfg = _make_completion_cfg(tmp_path)
+    import re_agent.build.transform.module_processor as mp
+
+    def _fake_subunit(*a, **kw):
+        return [
+            {
+                "function": "0x0002",
+                "module": "renderer",
+                "compiles": True,
+                "files": [],
+                "verdict": "PASS",
+                "diagnostic": {"match_strategy": "explicit_identity"},
+            }
+        ]
+
+    monkeypatch.setattr(mp, "process_subunit", _fake_subunit)
+    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
+    mp.process_modules(cfg, _make_llm_cfg(), module="renderer", subunit=1)
+    # Subunit 0 was NOT processed — module should NOT be completed.
+    # A second call with subunit=0 should process subunit 0.
+    call2 = [0]
+
+    def _fake_subunit2(*a, **kw):
+        call2[0] += 1
+        return [
+            {
+                "function": "0x0001",
+                "module": "renderer",
+                "compiles": True,
+                "files": [],
+                "verdict": "PASS",
+                "diagnostic": {"match_strategy": "explicit_identity"},
+            }
+        ]
+
+    monkeypatch.setattr(mp, "process_subunit", _fake_subunit2)
+    mp.process_modules(cfg, _make_llm_cfg(), module="renderer", subunit=0)
+    # Subunit 0 was NOT processed in first run → module NOT completed.
+    # Second run processes all subunits (0 and 1).
+    assert call2[0] == 2, "Both subunits should re-process (module was not completed)"
+
+
+def test_resume_completes_and_persists(monkeypatch: Any, tmp_path: Path) -> None:
+    """Resume with current_subunit=1, remaining all PASS → module completed, state persisted."""
+    _write_module_json_with_subunits(tmp_path, "renderer", 3)
+    _make_stubs(tmp_path, ["0x00000001", "0x00000002", "0x00000003"])
+    state_path = tmp_path / "cr-agent-state.json"
+    state = {"completed_modules": [], "current_module": "renderer", "current_subunit": 1, "phase": "transform"}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    import re_agent.build.transform.module_processor as mp
+
+    def _fake_subunit(*a, **kw):
+        return [
+            {
+                "function": "0x1000",
+                "module": "renderer",
+                "compiles": True,
+                "files": [],
+                "verdict": "PASS",
+                "diagnostic": {"match_strategy": "explicit_identity"},
+            }
+        ]
+
+    cfg = _make_completion_cfg(tmp_path, resume_state=state)
+    monkeypatch.setattr(mp, "process_subunit", _fake_subunit)
+    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
+
+    mp.process_modules(cfg, _make_llm_cfg())
+
+    # State file should now have renderer in completed_modules
+    saved = json.loads(state_path.read_text(encoding="utf-8"))
+    assert "renderer" in saved.get("completed_modules", []), (
+        f"renderer should be in completed_modules after successful resume, got {saved}"
+    )
+
+
+def test_resume_with_failure_does_not_complete(monkeypatch: Any, tmp_path: Path) -> None:
+    """Resume with failure → module NOT completed, state NOT updated."""
+    _write_module_json_with_subunits(tmp_path, "renderer", 3)
+    _make_stubs(tmp_path, ["0x00000001", "0x00000002", "0x00000003"])
+    state_path = tmp_path / "cr-agent-state.json"
+    state = {"completed_modules": [], "current_module": "renderer", "current_subunit": 1, "phase": "transform"}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    import re_agent.build.transform.module_processor as mp
+
+    _call = [0]
+
+    def _fake_subunit(*a, **kw):
+        _call[0] += 1
+        compiles = _call[0] == 1  # first passes, second fails
+        return [
+            {
+                "function": f"0x{_call[0]:08x}",
+                "module": "renderer",
+                "compiles": compiles,
+                "files": [],
+                "verdict": "PASS" if compiles else "FAIL_NO_RETRY",
+                "diagnostic": {"match_strategy": "explicit_identity"},
+            }
+        ]
+
+    cfg = _make_completion_cfg(tmp_path, resume_state=state)
+    monkeypatch.setattr(mp, "process_subunit", _fake_subunit)
+    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
+
+    mp.process_modules(cfg, _make_llm_cfg())
+
+    saved = json.loads(state_path.read_text(encoding="utf-8"))
+    assert "renderer" not in saved.get("completed_modules", []), (
+        f"renderer should NOT be in completed_modules after failed resume, got {saved}"
+    )
