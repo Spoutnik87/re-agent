@@ -1,8 +1,8 @@
-# re-agent (fork)
+# re-agent (fork) — v2.0.0
 
-Autonomous reverse-engineering agent — source-aware reverser/checker loop, block-level decomposition, configurable prompts, few-shot learning, objective verifier, and Ghidra backend.
+Autonomous reverse-engineering agent with a **build pipeline** for code reconstruction: source-aware reverser/checker loop, block-level decompilation, few-shot learning, objective verifier, Ghidra backend, and a **three-phase build (analyze → transform → assemble)** for reconstructing C++ source trees from flat `.cpp` decompilations.
 
-This is a fork with significant enhancements: block-level decompilation for large functions, few-shot example retrieval (5700+ indexed successes), pre-classification for strategy selection, configurable prompt templates, token-optimized LLM interactions (+ retry logic), and an extended test suite.
+This is a fork with significant enhancements: block-level decompilation for large functions, few-shot example retrieval (5700+ indexed successes), pre-classification for strategy selection, configurable prompt templates, token-optimized LLM interactions (+ retry logic), a `re-agent build` pipeline, and an extended test suite.
 
 ## Overview
 
@@ -45,6 +45,99 @@ re-agent reverse --class CTrain
     └── RE Backend: ghidra-ai-bridge
         └── Capability flags → graceful degradation
 ```
+
+## Build Pipeline (v2.0.0)
+
+The `re-agent build` command runs a three-phase pipeline to produce a C++ source tree from flat decompiled `.cpp` files:
+
+```
+re-agent build
+    │
+    └── Pipeline (3-phase)
+        │
+        ├── Phase 1: Analyze
+        │   ├── Call graph construction (undirected, networkx)
+        │   ├── Louvain community detection (networkx)
+        │   ├── TF-IDF similarity sub-unit grouping (scikit-learn)
+        │   └── Output: modules.json
+        │
+        ├── Phase 2: Transform
+        │   ├── LLM code refinement per sub-unit
+        │   ├── Target identity protocol (// TARGET: markers)
+        │   ├── Compile-gated acceptance (GCC per-function)
+        │   ├── Global budget (calls, tokens, compile-retries)
+        │   └── Output: temp_transformed/ files
+        │
+        └── Phase 3: Assemble
+            ├── Copy transformed files to output/
+            ├── Conflict reporting (no automated resolution)
+            ├── Common header generation
+            ├── CMakeLists.txt generation
+            └── Output: output/ source tree
+```
+
+## CLI Reference
+
+| Command | Description |
+|---------|-------------|
+| `re-agent init` | Generate `re-agent.yaml` config file |
+| `re-agent reverse --address ADDR` | Reverse a single function |
+| `re-agent reverse --class CLASS` | Reverse all functions in a class |
+| `re-agent reverse --address ADDR --no-optimize` | Disable token optimizations |
+| `re-agent reverse --dry-run` | Show what would be reversed |
+| `re-agent parity --address ADDR` | Run parity checks on a function |
+| `re-agent parity --filter REGEX` | Run parity checks matching pattern |
+| `re-agent status` | Show reversal progress |
+| `re-agent status --class CLASS` | Show progress for a specific class |
+| `re-agent pipeline` | Run full pipeline (reverse then build) |
+| `re-agent pipeline --skip-reverse` | Run build only |
+| `re-agent pipeline --skip-build` | Run reverse only |
+| `re-agent build` | Run full build pipeline (analyze → transform → assemble) |
+| `re-agent build --phase analyze` | Run only the analyze phase |
+| `re-agent build --phase transform` | Run only the transform phase |
+| `re-agent build --phase assemble` | Run only the assemble phase |
+| `re-agent build --phase transform --module MyModule` | Transform a specific module |
+| `re-agent build --phase transform --module MyModule --subunit 5` | Start at subunit index 5 |
+| `re-agent build --max-subunits 10` | Process at most 10 subunits |
+| `re-agent build --run-id "my-run"` | Tag diagnostics with a run identifier |
+| `re-agent build --phase transform --no-persist` | Dry-run transform, stdout JSON only |
+
+### Build Pipeline Details
+
+**`--phase`** selects which phase(s) to run. Without `--phase`, all three phases execute sequentially. Phases can be run independently — `analyze` must complete before `transform`, and `transform` before `assemble`.
+
+**`--module`** restricts the transform phase to a single module (by name from `modules.json`).
+
+**`--subunit`** sets the starting subunit index within the targeted module (used only with `--module` and `--phase transform`; no hard constraint enforce).
+
+**`--max-subunits`** caps the total number of subunits processed globally across all modules.
+
+**`--run-id`** tags diagnostics and evidence paths for traceability.
+
+**`--no-persist`** — dry-run mode for the `--phase transform` only. Output is a single JSON document on stdout. No files, cache, state, or temp dirs are written, and compilation is skipped. Functions successfully associated with their targets report `SKIPPED_COMPILE` with `compiles: false`. LLM calls still run and consume the global budget (`max_llm_calls_per_run`, `max_llm_tokens_per_run`), so the run is billable. Only valid with `--phase transform`. Messages go to stderr. Exit codes: **0** (no contract failure) or **2** (contract failure, budget exceeded, provider errors, incomplete targets, or hard rejects). Exit 1 is not produced in no-persist mode.
+
+### Target Contract Mode
+
+The `target_contract_mode` setting in `validation:` controls how `// TARGET:` markers in LLM output are enforced:
+
+- **`legacy`** (default): TARGET markers are optional only when **no TARGET markers at all** are present; then the system falls back to name/address matching. Any partial or invalid TARGET coverage rejects identity rather than falling back.
+- **`required`** (fail-closed): TARGET markers are mandatory. If **no TARGET markers at all** are present, the subunit fails immediately with `contract_failed`. If any `// TARGET:` line is present but malformed/invalid, the subunit also fails immediately. Only **partial valid TARGETs** (some functions covered, some missing, no conflicts) trigger recovery (up to 2 LLM calls, batch size 4). If recovery still produces incomplete coverage, the entire subunit is rejected with `INCOMPLETE_TARGETS` — no files written, no cache populated, compile count is zero.
+
+### Global Transform Budget
+
+Shared across ALL subunits within a single `re-agent build` invocation:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `max_llm_calls_per_run` | 8 | Hard cap on total LLM calls (initial gen, TARGET recovery, compile retries) |
+| `max_llm_tokens_per_run` | 150000 | Token cap checked after each LLM call via delta |
+| `max_compile_retry_calls_per_run` | 3 | Max compile retry calls across all functions |
+
+Token budget is enforced as a **stop-between-calls** cap: the delta from `get_usage()` before/after each call is subtracted. GCC compile retries are additionally bounded by retryable category (only `syntax_error`, `undeclared_identifier`, `type_mismatch`, `goto_error` qualify) and stagnation detection (identical SHA-256 stderr blocks further retries).
+
+### Breaking Changes from v1.x
+
+- `recovery_token_budget` has been **removed**. The global budget (`max_llm_calls_per_run`, `max_llm_tokens_per_run`) now controls everything including TARGET recovery.
 
 ## Key Enhancements (this fork)
 
@@ -167,6 +260,11 @@ re-agent parity --address 0x6F86A0
 
 # 6. Check progress
 re-agent status
+
+# 7. Reconstruct C++ source from reversed code
+re-agent build
+re-agent build --phase transform --no-persist     # dry-run transform only
+re-agent build --phase analyze                    # analyze only
 ```
 
 ## Configuration
@@ -181,38 +279,96 @@ llm:
   # api_key: set via RE_AGENT_LLM_API_KEY env var
   timeout_s: 1800
 
-backend:
-  type: ghidra-bridge
-  cli_path: ~/ghidra-tools/ghidra
+pipeline:
+  state_file: "pipeline-state.json"
 
-orchestrator:
-  optimize: true             # reset conversations between fix rounds
-  enable_phase1: true        # false = skip Phase 1 analysis, direct code gen (-30% output tokens)
-  max_review_rounds: 4
-  max_functions_per_class: 10
-  objective_verifier_enabled: true
-  objective_call_count_tolerance: 3
-  objective_control_flow_tolerance: 2
-  block_reversal_enabled: true
-  block_threshold_lines: 100
-  block_max_lines: 40
+reverse:
+  backend:
+    type: ghidra-bridge
+    cli_path: ~/ghidra-tools/ghidra
 
-project_profile:
-  source_root: ./reports/re-agent/code  # for few-shot example retrieval
-  hook_patterns:
-    - 'RH_ScopedInstall\s*\(\s*(\w+)\s*,\s*(0x[0-9A-Fa-f]+)'
-  stub_markers: ["NOTSA_UNREACHABLE"]
-  stub_call_prefix: "plugin::Call"
-  # project_description: "PROJECT: MyGame (2024) — Unreal Engine 5, x64 MSVC."
-  # project_context: "PROJECT CONTEXT — You are decompiling MyGame..."
-  # checker_custom_rules: "Additional custom verification rules..."
+  project_profile:
+    source_root: ./reports/re-agent/code  # for few-shot example retrieval
+    hook_patterns:
+      - 'RH_ScopedInstall\s*\(\s*(\w+)\s*,\s*(0x[0-9A-Fa-f]+)'
+    stub_markers: ["NOTSA_UNREACHABLE"]
+    stub_call_prefix: "plugin::Call"
+    # project_description: "PROJECT: MyGame (2024) — Unreal Engine 5, x64 MSVC."
+    # project_context: "PROJECT CONTEXT — You are decompiling MyGame..."
+    # checker_custom_rules: "Additional custom verification rules..."
+
+  parity:
+    enabled: true
+    call_count_warn_diff: 3
+
+  orchestrator:
+    optimize: true             # reset conversations between fix rounds
+    enable_phase1: true        # false = skip Phase 1 analysis, direct code gen (-30% output tokens)
+    max_review_rounds: 4
+    max_functions_per_class: 10
+    objective_verifier_enabled: true
+    objective_call_count_tolerance: 3
+    objective_control_flow_tolerance: 2
+    block_reversal_enabled: true
+    block_threshold_lines: 100
+    block_max_lines: 40
+
+build:
+  input:
+    decompiled_dir: "reports/re-agent/code/"
+    ghidra_exports: ".ghidra-exports/"
+
+  output:
+    language: "cpp"
+    standard: "c++23"
+    compiler: "g++"
+    compiler_flags: "-std=c++23 -m32 -c -Wall"
+    target_dir: "output/"
+    work_dir: "."
+    # decls_header: ".ghidra-exports/_decls.h"   # optional declaration header
+
+  project:
+    name: ""
+    description: ""
+    conventions:
+      naming:
+        classes: PascalCase
+        functions: camelCase
+        globals: snake_case
+      includes: "use_forward_decl_when_possible"
+      max_function_lines: 200
+
+  modules:
+    expected: []
+    min_cluster_size: 20
+    max_cluster_size: 300
+
+  optimization:
+    subunit_size: 10
+    context_window: 3
+    cache_enabled: true
+    cache_path: ".cr-agent-cache.json"
+    max_llm_calls_per_run: 8
+    max_llm_tokens_per_run: 150000
+    max_compile_retry_calls_per_run: 3
+
+  validation:
+    compile_per_function: true
+    compile_per_module: true
+    compile_final_project: true
+    max_compile_retries: 2
+    target_contract_mode: "legacy"   # legacy | required
+
+  resume:
+    enabled: true
+    state_path: "cr-agent-state.json"
 ```
 
 See [docs/configuration.md](docs/configuration.md) for all options.
 
 ## Architecture
 
-### Pipeline by Function Size
+### Reverse Pipeline by Function Size
 
 | Lines | Classification | Strategy |
 |-------|---------------|----------|
@@ -230,20 +386,6 @@ See [docs/configuration.md](docs/configuration.md) for all options.
 | Checking, decomposition | `llm.model` (pro) | Semantic reasoning required |
 | Block reversals (fast, small) | `llm.block_model` (flash) | Translation only — mapping already provided by pro |
 | Block reversals (hybrid, large blocks) | `llm.model` (pro) | Complex logic requires pro reasoning |
-
-## CLI Reference
-
-| Command | Description |
-|---------|-------------|
-| `re-agent init` | Generate `re-agent.yaml` config file |
-| `re-agent reverse --address ADDR` | Reverse a single function |
-| `re-agent reverse --class CLASS` | Reverse all functions in a class |
-| `re-agent reverse --address ADDR --no-optimize` | Disable token optimizations |
-| `re-agent reverse --dry-run` | Show what would be reversed |
-| `re-agent parity --address ADDR` | Run parity checks on a function |
-| `re-agent parity --filter REGEX` | Run parity checks matching pattern |
-| `re-agent status` | Show reversal progress |
-| `re-agent status --class CLASS` | Show progress for a specific class |
 
 ## LLM Providers
 
@@ -287,19 +429,29 @@ This is intentionally narrower than full equivalence checking, but it catches ob
 - **API retry**: 3 retries with exponential backoff on transient failures
 - **Conversation cleanup**: History freed after each function reversal
 - **Deterministic logs**: Every LLM call logged with timestamps
-- **No destructive ops**: Never deletes files, modifies git, or runs builds
+- **Reverse / no-persist are safe**: The `reverse` phase and `build --no-persist` never delete files, modify git, or compile. However, `build --phase assemble` deletes and recreates `target_dir`; `build --phase transform` (persist mode) compiles per-function and writes temp files. LLM calls in no-persist are billed normally.
 - **Session isolation**: Progress appended, never overwritten
 
 ## Customizing Prompts
 
-All prompt templates live in `src/re_agent/agents/prompts/` as `.md` files using `$variable` placeholders. You can edit them directly:
+### Reverse Prompts
+
+All prompt templates for the reverse pipeline live in `src/re_agent/reverse/agents/prompts/` as `.md` files using `$variable` placeholders:
 
 ```bash
-ls src/re_agent/agents/prompts/
+ls src/re_agent/reverse/agents/prompts/
 # block_reverser_system.md  block_reverser_task.md  checker_system.md  checker_task.md
-# decompose_system.md  decompose_task.md  fix_instructions.md  rename_system.md
-# rename_task.md  reverser_system.md  reverser_task.md  skeleton_system.md
-# skeleton_task.md  varmap_system.md  varmap_task.md
+# decompose_system.md  decompose_task.md  fix_instructions.md
+# reverser_system.md  reverser_task.md  varmap_system.md  varmap_task.md
+```
+
+### Build Prompts
+
+Build prompt templates live in `src/re_agent/build/prompts/`:
+
+```bash
+ls src/re_agent/build/prompts/
+# transform_system.md  transform_task.md  repair_system.md
 ```
 
 Variables available in all system prompts:
