@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,7 +22,7 @@ from re_agent.build.transform.diagnostics import (
 from re_agent.build.validate.compiler import compile_check
 from re_agent.build.work_packet_types import ModelUsage
 from re_agent.common.compiler import compile_generated_file_set
-from re_agent.llm.protocol import LLMProvider, Message, get_usage
+from re_agent.llm.protocol import LLMProvider, Message, ProviderUsage, get_usage
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +31,117 @@ log = logging.getLogger(__name__)
 _TARGET_RECOVERY_MAX_CALLS = 2
 # Maximum missing functions per recovery batch
 _TARGET_RECOVERY_BATCH_SIZE = 4
+
+# Compile error categories that may benefit from an LLM retry.
+# Categories not in this set (include_error, decls_header_warning,
+# too_many_arguments, unknown, empty stderr) are never retried.
+_RETRYABLE_COMPILE_CATEGORIES = frozenset(
+    {
+        "syntax_error",
+        "undeclared_identifier",
+        "type_mismatch",
+        "goto_error",
+    }
+)
+
+
+@dataclass(frozen=True)
+class SendResult:
+    """Structured result from a budgeted LLM send.
+
+    ``status`` is one of:
+      - ``"ok"`` — the call succeeded (response is the text).
+      - ``"budget_exceeded"`` — budget was exhausted before the call.
+      - ``"provider_error"`` — the provider raised an exception.
+
+    ``response`` is the LLM response text when status is ``"ok"``,
+    ``None`` otherwise.
+
+    ``usage_delta`` is a ``ProviderUsage`` representing the delta
+    (prompt, completion, calls) consumed by this send.  When the call
+    was rejected before sending (budget_exceeded), all fields are 0.
+    """
+
+    status: str  # "ok" | "budget_exceeded" | "provider_error"
+    response: str | None
+    usage_delta: ProviderUsage
+
+
+@dataclass
+class TransformBudget:
+    """Global per-invocation transform budget shared across ALL subunits.
+
+    Tracks remaining calls, tokens, and compile retries.  Each ``llm.send()``
+    — initial generation, TARGET recovery, compile retry — deducts from this
+    budget.  Once any counter reaches zero (or a token cap is hit between
+    calls), further sends are rejected with ``BUDGET_EXCEEDED``.
+
+    ``tokens_remaining`` is a stop-*between*-calls cap: the delta from
+    ``get_usage()`` before/after each call is subtracted.  ``None`` values
+    from the provider are treated as 0.
+
+    ``compile_retry_calls_remaining`` is a per-function cap; after a subunit-
+    level compile retry, per-function retries are disabled entirely for the
+    remainder of the run.
+    """
+
+    calls_remaining: int = 8
+    tokens_remaining: int = 150000
+    compile_retry_calls_remaining: int = 3
+    exceeded: bool = False
+    exceeded_reason: str = ""
+    _subunit_retry_occurred: bool = False
+    provider_error_count: int = 0
+
+    def check_before_call(self, kind: str) -> bool:
+        """Return False if budget is exhausted (no call should be made)."""
+        if self.exceeded:
+            return False
+        if self.calls_remaining <= 0:
+            self.exceeded = True
+            self.exceeded_reason = f"Call budget exhausted (kind={kind})"
+            return False
+        return True
+
+    def record_after_call(
+        self,
+        kind: str,
+        before: Any,
+        after: Any,
+        subunit_retry: bool = False,
+        provider_error: bool = False,
+    ) -> None:
+        """Record usage after an LLM call.  Deducts calls and tokens."""
+        self.calls_remaining -= 1
+        if provider_error:
+            self.provider_error_count += 1
+        delta_prompt = max((after.prompt_tokens or 0) - (before.prompt_tokens or 0), 0)
+        delta_completion = max((after.completion_tokens or 0) - (before.completion_tokens or 0), 0)
+        delta_tokens = delta_prompt + delta_completion
+        self.tokens_remaining -= delta_tokens
+        if subunit_retry:
+            self._subunit_retry_occurred = True
+        if self.tokens_remaining <= 0:
+            self.exceeded = True
+            self.exceeded_reason = (
+                f"Token budget exhausted (delta={delta_tokens}, remaining={self.tokens_remaining}, kind={kind})"
+            )
+
+    @property
+    def subunit_retry_occurred(self) -> bool:
+        return self._subunit_retry_occurred
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "calls_remaining": self.calls_remaining,
+            "tokens_remaining": self.tokens_remaining,
+            "compile_retry_calls_remaining": self.compile_retry_calls_remaining,
+            "exceeded": self.exceeded,
+            "exceeded_reason": self.exceeded_reason,
+            "subunit_retry_occurred": self._subunit_retry_occurred,
+            "provider_error_count": self.provider_error_count,
+        }
+
 
 _FILE_MARKER_RE = re.compile(r"^// FILE: (.+)$", re.MULTILINE)
 
@@ -171,6 +284,187 @@ def _analyze_target_coverage(
     )
 
 
+def _budgeted_send(
+    llm: LLMProvider,
+    messages: list[Message],
+    budget: TransformBudget,
+    kind: str,
+    record_kwargs: dict[str, Any] | None = None,
+) -> SendResult:
+    """Send an LLM call through the global budget.
+
+    Returns a ``SendResult`` with:
+      - ``status="ok"`` — call succeeded, ``response`` is the text.
+      - ``status="budget_exceeded"`` — budget exhausted before sending.
+      - ``status="provider_error"`` — provider raised an exception.
+
+    *kind* is a diagnostic label (``"initial"``, ``"target_recovery"``,
+    ``"compile_subunit_retry"``, ``"compile_func_retry"``).
+    """
+    if not budget.check_before_call(kind):
+        log.warning("Budget exceeded before %s call: %s", kind, budget.exceeded_reason)
+        return SendResult(
+            status="budget_exceeded",
+            response=None,
+            usage_delta=ProviderUsage(
+                prompt_tokens=0,
+                completion_tokens=0,
+                cache_hit_tokens=None,
+                cache_miss_tokens=None,
+                calls=0,
+            ),
+        )
+    before = get_usage(llm)
+    try:
+        response = llm.send(messages)
+    except Exception:
+        log.warning("LLM call failed for kind=%s", kind)
+        after = get_usage(llm)
+        budget.record_after_call(kind, before, after, **(record_kwargs or {}), provider_error=True)
+        return SendResult(
+            status="provider_error",
+            response=None,
+            usage_delta=ProviderUsage(
+                prompt_tokens=(after.prompt_tokens or 0) - (before.prompt_tokens or 0),
+                completion_tokens=(after.completion_tokens or 0) - (before.completion_tokens or 0),
+                cache_hit_tokens=None,
+                cache_miss_tokens=None,
+                calls=1,
+            ),
+        )
+    after = get_usage(llm)
+    budget.record_after_call(kind, before, after, **(record_kwargs or {}))
+    usage_delta = ProviderUsage(
+        prompt_tokens=(after.prompt_tokens or 0) - (before.prompt_tokens or 0),
+        completion_tokens=(after.completion_tokens or 0) - (before.completion_tokens or 0),
+        cache_hit_tokens=None,
+        cache_miss_tokens=None,
+        calls=1,
+    )
+    # If this call exhausted the budget (token cap breached), propagate
+    # budget_exceeded immediately so the caller does NOT process the
+    # response — the verdict becomes BUDGET_EXCEEDED for the entire subunit.
+    if budget.exceeded:
+        return SendResult(
+            status="budget_exceeded",
+            response=None,
+            usage_delta=usage_delta,
+        )
+    return SendResult(
+        status="ok",
+        response=response,
+        usage_delta=usage_delta,
+    )
+
+
+def _compile_retry_allowed(
+    category: str | None,
+    stderr: str,
+    prev_stderr_hash: str | None,
+    budget: TransformBudget,
+    subunit_retry_occurred: bool,
+) -> tuple[bool, str]:
+    """GCC retry policy: decide whether a compile retry is worth attempting.
+
+    ``prev_stderr_hash`` is an optional SHA-256 hex digest of the *previous*
+    compiler stderr (from a prior retry attempt).  When provided and matching,
+    stagnation is detected — the same build error recurred despite a retry —
+    and the retry is blocked.
+
+    Returns ``(allowed, reason)``.
+    """
+    if budget.compile_retry_calls_remaining <= 0:
+        return False, "compile retry budget exhausted"
+    if subunit_retry_occurred:
+        return False, "subunit retry already occurred — no per-function retry"
+    if category is None or category not in _RETRYABLE_COMPILE_CATEGORIES:
+        return False, f"non-retryable category: {category}"
+    if not stderr.strip():
+        return False, "empty stderr (no actionable error)"
+    # Stagnation: identical stderr SHA-256 as last attempt → retry won't help
+    if prev_stderr_hash is not None:
+        current_hash = hashlib.sha256(stderr.encode()).hexdigest()
+        if current_hash == prev_stderr_hash:
+            return False, "stagnant stderr (identical to previous attempt)"
+    return True, ""
+
+
+def _no_persist_json_output(
+    results: list[dict[str, Any]],
+    budget: TransformBudget | None,
+    start_usage: Any,
+    end_usage: Any,
+    exit_code: int,
+) -> None:
+    """Write structured diagnostics JSON to stdout for ``--no-persist`` runs.
+
+    Only called when ``persist=False``.  The JSON includes summary, budget,
+    calls, verdicts, GCC categories, and retry skip reasons — NOT prompts,
+    raw code, unbounded stderr, or secrets.
+
+    ``start_usage`` and ``end_usage`` should be ``ProviderUsage`` snapshots
+    from ``get_usage()`` before and after all LLM calls.  The delta is
+    reported as usage.
+    """
+    import json
+
+    total = len(results)
+    passed = sum(1 for r in results if r.get("compiles"))
+    incomplete = sum(1 for r in results if r.get("verdict") == "INCOMPLETE_TARGETS")
+    hard_rejects = sum(
+        1
+        for r in results
+        if r.get("verdict") == "NO_OUTPUT" and r.get("diagnostic", {}).get("match_strategy") == "rejected_identity"
+    )
+    budget_exceeds = sum(1 for r in results if r.get("verdict") == "BUDGET_EXCEEDED")
+    provider_errors = sum(1 for r in results if r.get("verdict") == "PROVIDER_ERROR")
+    contract_failed = incomplete > 0 or hard_rejects > 0 or budget_exceeds > 0 or provider_errors > 0
+    failed = total - passed - incomplete - hard_rejects - budget_exceeds - provider_errors
+
+    report: dict[str, Any] = {
+        "run_type": "no-persist",
+        "exit_code": exit_code,
+        "summary": {
+            "total": total,
+            "passed": passed,
+            "failed": failed,
+            "incomplete": incomplete,
+            "hard_rejects": hard_rejects,
+            "budget_exceeded": budget_exceeds,
+            "provider_errors": provider_errors,
+            "contract_failed": contract_failed,
+        },
+        "usage": {
+            "prompt_tokens": (end_usage.prompt_tokens or 0) - (start_usage.prompt_tokens or 0),
+            "completion_tokens": (end_usage.completion_tokens or 0) - (start_usage.completion_tokens or 0),
+            "total_calls": (end_usage.calls or 0) - (start_usage.calls or 0),
+        },
+        "results": [],
+    }
+    if budget is not None:
+        report["budget"] = budget.to_dict()
+
+    for r in results:
+        diag = r.get("diagnostic", {})
+        entry: dict[str, Any] = {
+            "function": r["function"],
+            "verdict": r["verdict"],
+            "compiles": r["compiles"],
+            "files_matched": len(r.get("files", [])),
+            "match_strategy": diag.get("match_strategy"),
+            "identity_state": diag.get("identity_state"),
+            "identity_reason": diag.get("identity_reason", ""),
+            "compile_error_category": diag.get("compile_error_category"),
+            "files": [{"path": f["path"]} for f in r.get("files", [])],
+        }
+        # Retry skip reason (from diagnostic or from _compile_retry_allowed)
+        skip_reason = diag.get("retry_skip_reason") or diag.get("identity_reason", "")
+        if skip_reason:
+            entry["retry_skip_reason"] = skip_reason
+        report["results"].append(entry)
+    sys.stdout.write(json.dumps(report, indent=2) + "\n")
+
+
 def _render_recovery_prompt(batch: list[tuple[int, dict[str, Any]]]) -> str:
     """Build a compact recovery prompt for a batch of missing functions.
 
@@ -268,8 +562,8 @@ def _run_target_recovery(
     functions_to_transform: list[dict[str, Any]],
     llm: LLMProvider,
     system_prompt: str,
+    budget: TransformBudget,
     max_calls: int = _TARGET_RECOVERY_MAX_CALLS,
-    token_budget: int = 65536,
 ) -> TargetCoverage:
     """Launch recovery for functions missing TARGET coverage.
 
@@ -278,11 +572,9 @@ def _run_target_recovery(
     ordinals.  Recovery records are only merged when they pass
     ``_validate_target_groups`` against the current set of *covered* paths.
 
-    **Token budget**: a stop-*between*-calls cap, not a per-call limit.
-    After each recovery ``llm.send()``, the delta (prompt + completion) from
-    ``get_usage(llm)`` is added to ``tokens_used``.  If ``tokens_used >=
-    token_budget``, no further recovery calls are made — even if the current
-    batch was incomplete.  ``None`` values from the provider are treated as 0.
+    Uses the shared ``TransformBudget`` (``_budgeted_send``) for call and token
+    capping — budget is owned by ``process_modules`` and shared across ALL
+    subunits.
 
     Returns a new ``TargetCoverage`` — never ``has_conflict``, only success
     or partial coverage.
@@ -296,7 +588,6 @@ def _run_target_recovery(
     all_ordinals = set(range(len(functions_to_transform)))
 
     calls_remaining = max_calls
-    tokens_used = 0
 
     while calls_remaining > 0:
         remaining = sorted(all_ordinals - covered_ordinals)
@@ -314,28 +605,38 @@ def _run_target_recovery(
         ]
 
         calls_remaining -= 1
-        # Real provider token delta
-        before = get_usage(llm)
-        try:
-            recovery_response = llm.send(messages)
-        except Exception:
-            log.warning("Target recovery call for batch %s failed (LLM error)", batch_ordinals)
-            if tokens_used >= token_budget:
-                break
+        send_result = _budgeted_send(llm, messages, budget, "target_recovery")
+        if send_result.status == "budget_exceeded":
+            # Return conflict-flagged coverage so the caller (process_subunit)
+            # can detect the budget exceeded and produce BUDGET_EXCEEDED verdicts.
+            return TargetCoverage(
+                covered_ordinals=frozenset(covered_ordinals),
+                covered_records=tuple(covered_records),
+                missing_ordinals=frozenset(all_ordinals - covered_ordinals),
+                is_complete=False,
+                has_conflict=True,
+                conflict_reason="budget_exceeded",
+            )
+        if send_result.status == "provider_error":
+            log.warning("Provider error during target recovery — stopping")
+            # Return a conflict-flagged coverage so the caller (process_subunit)
+            # can detect the error via budget.provider_error_count delta and
+            # produce PROVIDER_ERROR verdicts.
+            return TargetCoverage(
+                covered_ordinals=frozenset(covered_ordinals),
+                covered_records=tuple(covered_records),
+                missing_ordinals=frozenset(all_ordinals - covered_ordinals),
+                is_complete=False,
+                has_conflict=True,
+                conflict_reason="provider_error",
+            )
+        if send_result.status != "ok" or send_result.response is None:
             continue
-        after = get_usage(llm)
-        delta_prompt = max((after.prompt_tokens or 0) - (before.prompt_tokens or 0), 0)
-        delta_completion = max((after.completion_tokens or 0) - (before.completion_tokens or 0), 0)
-        tokens_used += delta_prompt + delta_completion
-
+        recovery_response = send_result.response
         recovery_records, has_invalid = _parse_llm_response_records(recovery_response)
         if has_invalid or not recovery_records:
             log.warning("Target recovery batch %s produced invalid records", batch_ordinals)
-            if tokens_used >= token_budget:
-                break
             continue
-
-        # Validate against allowed ordinals AND existing covered paths
         is_valid, reason = _validate_target_groups(
             recovery_records,
             allowed_ordinals=set(batch_ordinals),
@@ -345,21 +646,13 @@ def _run_target_recovery(
         )
         if not is_valid:
             log.warning("Target recovery batch %s rejected: %s", batch_ordinals, reason)
-            if tokens_used >= token_budget:
-                break
             continue
-
-        # Merge valid recovery records (validated against covered_paths above)
         for rr in recovery_records:
             assert rr.target is not None
             ordinal = rr.target[0]
             covered_ordinals.add(ordinal)
             covered_records.append(rr)
             covered_paths.add(rr.path)
-
-        if tokens_used >= token_budget:
-            break
-
     missing_ordinals = all_ordinals - covered_ordinals
     return TargetCoverage(
         covered_ordinals=frozenset(covered_ordinals),
@@ -1059,6 +1352,62 @@ def _build_candidate_analysis(
     return tuple(paths), tuple(has_addr), tuple(has_name)
 
 
+def _budget_exceeded_result(func: dict[str, Any]) -> dict[str, Any]:
+    """Return a BUDGET_EXCEEDED result for a function.
+
+    ``BUDGET_EXCEEDED`` is an explicit, non-cacheable verdict meaning the
+    global transform budget (calls or tokens) was exhausted.  All functions
+    in the subunit get this verdict when budget runs out mid-subunit.
+    """
+    return {
+        "function": func["address"],
+        "module": "",
+        "files": [],
+        "compiles": False,
+        "verdict": "BUDGET_EXCEEDED",
+        "diagnostic": {
+            "match_strategy": "none",
+            "identity_state": "none",
+            "identity_reason": "Global transform budget exhausted",
+        },
+    }
+
+
+def _provider_error_result(func: dict[str, Any]) -> dict[str, Any]:
+    """Return a PROVIDER_ERROR result for a function.
+
+    ``PROVIDER_ERROR`` is distinct from ``BUDGET_EXCEEDED`` — it means the
+    LLM provider raised an exception.  Not cacheable, counted separately
+    from budget exhaustion.
+    """
+    return {
+        "function": func["address"],
+        "module": "",
+        "files": [],
+        "compiles": False,
+        "verdict": "PROVIDER_ERROR",
+        "diagnostic": {
+            "match_strategy": "none",
+            "identity_state": "none",
+            "identity_reason": "Provider error during LLM call",
+        },
+    }
+
+
+def _handle_budget_exceeded(
+    per_func_files: list[list[dict[str, str]]],
+    per_func_strategies: list[str],
+    identity_info: list[tuple[str, str, int]],
+    functions_to_transform: list[dict[str, Any]],
+) -> None:
+    """Overwrite all per-func data when budget is exceeded mid-subunit."""
+    for i in range(len(functions_to_transform)):
+        per_func_files[i] = []
+        per_func_strategies[i] = "none"
+    for i in range(len(functions_to_transform)):
+        identity_info[i] = ("none", "Budget exceeded — run stopped", 0)
+
+
 def _opt_diagnostics_dir(cfg: Any) -> Path | None:
     """Resolve the diagnostics directory from cfg.optimization, or None.
 
@@ -1111,16 +1460,39 @@ def process_subunit(
     cfg: Any,
     cache: Any,
     persist: bool = True,
+    budget: TransformBudget | None = None,
 ) -> list[dict[str, Any]]:
+    """Process a subunit of functions through the LLM transform pipeline.
+
+    ``budget`` is REQUIRED in production — every ``llm.send()`` goes through
+    ``_budgeted_send`` which enforces call, token, and compile-retry caps.
+    ``process_modules`` always passes a configured budget.  When ``None``
+    (tests without a budget), a fresh default is created each call so tests
+    do not accidentally share budget state.
+    """
     functions_to_transform = subunit_context.get("functions_to_transform", [])
     if not functions_to_transform:
         return []
+
+    # Fresh default for callers (e.g. tests) that don't pass a budget.
+    if budget is None:
+        budget = TransformBudget()
 
     system = _render_system_prompt(cfg, module_name)
     repair_system = _render_repair_prompt(cfg, module_name)
     user = _render_task_prompt(module_name, subunit_context)
     messages = [Message(role="system", content=system), Message(role="user", content=user)]
-    response = llm.send(messages)
+    send_result = _budgeted_send(llm, messages, budget, "initial")
+
+    if send_result.status != "ok":
+        # Budget exceeded or provider error — return appropriate verdict for all functions
+        log.warning("Initial LLM send failed: status=%s", send_result.status)
+        if send_result.status == "provider_error":
+            return [_provider_error_result(f) for f in functions_to_transform]
+        return [_budget_exceeded_result(f) for f in functions_to_transform]
+
+    response = send_result.response
+    assert response is not None
 
     log.info("LLM response (first 500 chars): %s", response[:500])
 
@@ -1212,15 +1584,24 @@ def process_subunit(
         initial_coverage = _analyze_target_coverage(initial_records, functions_to_transform)
 
         if not initial_coverage.has_conflict and not initial_coverage.is_complete:
-            token_budget = getattr(getattr(cfg, "optimization", None), "recovery_token_budget", 65536)
             final_coverage = _run_target_recovery(
                 initial_coverage,
                 functions_to_transform,
                 llm,
                 system,
+                budget,
                 max_calls=_TARGET_RECOVERY_MAX_CALLS,
-                token_budget=token_budget,
             )
+
+            # Provider error during recovery → entire subunit is PROVIDER_ERROR
+            if final_coverage.has_conflict and final_coverage.conflict_reason == "provider_error":
+                log.warning("Provider error during target recovery — PROVIDER_ERROR for all functions")
+                return [_provider_error_result(f) for f in functions_to_transform]
+
+            # Budget exceeded during recovery → entire subunit is BUDGET_EXCEEDED
+            if final_coverage.has_conflict and final_coverage.conflict_reason == "budget_exceeded":
+                log.warning("Budget exceeded during target recovery — BUDGET_EXCEEDED for all functions")
+                return [_budget_exceeded_result(f) for f in functions_to_transform]
 
             # P0-3: Merge ONLY with initial_coverage.covered_records (valid TARGETs),
             # never with unidentified FILE records.  Recovery records are validated
@@ -1282,9 +1663,28 @@ def process_subunit(
         if not compiles:
             failed_funcs.append({"func": func, "files": func_files, "err": err})
 
-    # Subunit-level retry: re-send whole subunit with all errors in one call
+    # P0-3: Classify compile failures by GCC category.  Decide retry strategy:
+    #   - 0 retryable categories => no LLM send at all.
+    #   - 1 retryable          => skip subunit retry, let per-function retry handle it
+    #                             (at most 1 call via _retry_with_conversation).
+    #   - >=2 retryables       => one subunit retry (consumes global compile-retry cap,
+    #                             disables all per-function retries).
+    # Categories include/decls/too-many/unknown/empty never trigger an LLM call.
+    from re_agent.build.transform.diagnostics import classify_compile_error
+
+    retryable_categories = [
+        classify_compile_error(f["err"])
+        for f in failed_funcs
+        if f["err"].strip() and classify_compile_error(f["err"]) in _RETRYABLE_COMPILE_CATEGORIES
+    ]
+    n_retryable = len(retryable_categories)
+
     retry_marker_count = 0
-    if failed_funcs and max_retries > 0:
+    # P0-3 decision tree:
+    #   0 retryable → no LLM call (skip subunit retry entirely)
+    #   1 retryable → skip subunit retry, let per-function handle
+    #   >=2 retryable → one subunit retry (only if compile retry budget remains)
+    if failed_funcs and max_retries > 0 and n_retryable >= 2 and budget.compile_retry_calls_remaining > 0:
         error_annotations = "\n\n".join(
             f"Function {f['func']['address']} failed to compile:\n{f['err']}" for f in failed_funcs
         )
@@ -1304,14 +1704,27 @@ def process_subunit(
             Message(role="assistant", content=response),
             Message(role="user", content=retry_prompt),
         ]
-        retry_response = llm.send(retry_messages)
-        retry_records, retry_has_invalid = _parse_llm_response_records(retry_response)
+        budget.compile_retry_calls_remaining -= 1
+        retry_send = _budgeted_send(llm, retry_messages, budget, "compile_subunit_retry", {"subunit_retry": True})
+        retry_records: list[FileRecord] = []
+        retry_has_invalid = False
+        retry_response: str | None = None
+        if retry_send.status == "budget_exceeded":
+            log.warning("Budget exceeded during compile_subunit_retry — BUDGET_EXCEEDED for all functions")
+            return [_budget_exceeded_result(f) for f in functions_to_transform]
+        elif retry_send.status == "provider_error":
+            log.warning("Provider error during compile_subunit_retry — PROVIDER_ERROR for all functions")
+            return [_provider_error_result(f) for f in functions_to_transform]
+        elif retry_send.status == "ok":
+            retry_response = retry_send.response
+            assert retry_response is not None
+            retry_records, retry_has_invalid = _parse_llm_response_records(retry_response)
         retry_marker_count = len(retry_records)
 
         # If the retry itself has an invalid file block, reject the retry
         # entirely (keep initial records and association) — the retry response
         # is malformed and must not degrade the initial mapping.
-        if retry_records and not retry_has_invalid:
+        if retry_records and not retry_has_invalid and retry_response is not None:
             # Merge with target preservation: known paths keep initial target;
             # new paths require valid TARGET (validated in re-association).
             # Strict TARGET validation is required when initial was explicit.
@@ -1455,7 +1868,7 @@ def process_subunit(
                 }
             )
         elif per_func_retries > 0:
-            retry_files = _retry_with_conversation(
+            retry_files, retry_skip_reason = _retry_with_conversation(
                 func_files,
                 err,
                 func,
@@ -1464,54 +1877,146 @@ def process_subunit(
                 llm,
                 per_func_retries,
                 cfg,
+                budget=budget,
                 ordinal=i,
             )
-            if retry_files:
-                func_files = retry_files
-                cpp_file = next((f for f in func_files if f["path"].endswith(".cpp")), func_files[0])
-            retry_compiles, retry_err = _compile_generated_cpp(func_files, cpp_file, cfg)
-            if retry_compiles:
-                total_files_written += len(func_files)
-                function_verdicts.append(
-                    FunctionVerdict(
-                        address=addr,
-                        verdict="PASS_RETRY",
-                        compiles=True,
-                        files_matched=len(func_files),
-                        match_strategy=strategy,
-                        candidate_paths=candidate_paths,
-                        candidate_has_address=candidate_has_address,
-                        candidate_has_name=candidate_has_name,
-                        identity_state=identity_state,
-                        identity_reason=identity_reason,
-                        target_file_count=target_count,
+            if retry_files is not None:
+                # Retry was actually attempted (LLM call was made)
+                if retry_files:
+                    func_files = retry_files
+                    cpp_file = next((f for f in func_files if f["path"].endswith(".cpp")), func_files[0])
+                retry_compiles, retry_err = _compile_generated_cpp(func_files, cpp_file, cfg)
+                if retry_compiles:
+                    total_files_written += len(func_files)
+                    function_verdicts.append(
+                        FunctionVerdict(
+                            address=addr,
+                            verdict="PASS_RETRY",
+                            compiles=True,
+                            files_matched=len(func_files),
+                            match_strategy=strategy,
+                            candidate_paths=candidate_paths,
+                            candidate_has_address=candidate_has_address,
+                            candidate_has_name=candidate_has_name,
+                            identity_state=identity_state,
+                            identity_reason=identity_reason,
+                            target_file_count=target_count,
+                        )
                     )
-                )
-                results.append(
-                    {
-                        "function": addr,
-                        "module": module_name,
-                        "files": func_files,
-                        "compiles": True,
-                        "verdict": "PASS_RETRY",
-                    }
-                )
+                    results.append(
+                        {
+                            "function": addr,
+                            "module": module_name,
+                            "files": func_files,
+                            "compiles": True,
+                            "verdict": "PASS_RETRY",
+                        }
+                    )
+                else:
+                    # Retry attempted but still fails → FAIL_AFTER_RETRY
+                    function_verdicts.append(
+                        FunctionVerdict(
+                            address=addr,
+                            verdict="FAIL_AFTER_RETRY",
+                            compiles=False,
+                            files_matched=len(func_files),
+                            match_strategy=strategy,
+                            candidate_paths=candidate_paths,
+                            candidate_has_address=candidate_has_address,
+                            candidate_has_name=candidate_has_name,
+                            compile_error=truncate_compile_error(retry_err),
+                            compile_error_category=classify_compile_error(retry_err),
+                            identity_state=identity_state,
+                            identity_reason=identity_reason,
+                            target_file_count=target_count,
+                        )
+                    )
+                    results.append(
+                        {
+                            "function": addr,
+                            "module": module_name,
+                            "files": func_files,
+                            "compiles": False,
+                            "verdict": "FAIL_AFTER_RETRY",
+                        }
+                    )
             else:
+                if retry_skip_reason == "PROVIDER_ERROR":
+                    # Provider error during retry → PROVIDER_ERROR (not FAIL_NO_RETRY).
+                    # provider_error_count was already incremented by _budgeted_send.
+                    function_verdicts.append(
+                        FunctionVerdict(
+                            address=addr,
+                            verdict="PROVIDER_ERROR",
+                            compiles=False,
+                            files_matched=len(func_files),
+                            match_strategy=strategy,
+                            candidate_paths=candidate_paths,
+                            candidate_has_address=candidate_has_address,
+                            candidate_has_name=candidate_has_name,
+                            identity_state=identity_state,
+                            identity_reason=identity_reason,
+                            target_file_count=target_count,
+                            retry_skip_reason="Provider error during retry",
+                        )
+                    )
+                    results.append(
+                        {
+                            "function": addr,
+                            "module": module_name,
+                            "files": func_files,
+                            "compiles": False,
+                            "verdict": "PROVIDER_ERROR",
+                        }
+                    )
+                    continue  # skip FAIL_NO_RETRY fallthrough
+
+                if retry_skip_reason == "BUDGET_EXCEEDED":
+                    # Budget exceeded during retry → BUDGET_EXCEEDED (not FAIL_NO_RETRY)
+                    function_verdicts.append(
+                        FunctionVerdict(
+                            address=addr,
+                            verdict="BUDGET_EXCEEDED",
+                            compiles=False,
+                            files_matched=0,
+                            match_strategy=strategy,
+                            candidate_paths=candidate_paths,
+                            candidate_has_address=candidate_has_address,
+                            candidate_has_name=candidate_has_name,
+                            identity_state=identity_state,
+                            identity_reason=identity_reason,
+                            target_file_count=target_count,
+                            retry_skip_reason="Budget exceeded during per-function retry",
+                        )
+                    )
+                    results.append(
+                        {
+                            "function": addr,
+                            "module": module_name,
+                            "files": [],
+                            "compiles": False,
+                            "verdict": "BUDGET_EXCEEDED",
+                        }
+                    )
+                    continue  # skip FAIL_NO_RETRY fallthrough
+
+                # No retry LLM call made: fall through to FAIL_NO_RETRY
                 function_verdicts.append(
                     FunctionVerdict(
                         address=addr,
-                        verdict="FAIL_AFTER_RETRY",
+                        verdict="FAIL_NO_RETRY",
                         compiles=False,
                         files_matched=len(func_files),
                         match_strategy=strategy,
                         candidate_paths=candidate_paths,
                         candidate_has_address=candidate_has_address,
                         candidate_has_name=candidate_has_name,
-                        compile_error=truncate_compile_error(retry_err),
-                        compile_error_category=classify_compile_error(retry_err),
+                        compile_error=truncate_compile_error(err),
+                        compile_error_category=classify_compile_error(err),
                         identity_state=identity_state,
                         identity_reason=identity_reason,
                         target_file_count=target_count,
+                        retry_skip_reason=retry_skip_reason,
                     )
                 )
                 results.append(
@@ -1520,10 +2025,11 @@ def process_subunit(
                         "module": module_name,
                         "files": func_files,
                         "compiles": False,
-                        "verdict": "FAIL_AFTER_RETRY",
+                        "verdict": "FAIL_NO_RETRY",
                     }
                 )
         else:
+            no_retry_reason = "max_compile_retries=0 in config — retry disabled"
             function_verdicts.append(
                 FunctionVerdict(
                     address=addr,
@@ -1539,6 +2045,7 @@ def process_subunit(
                     identity_state=identity_state,
                     identity_reason=identity_reason,
                     target_file_count=target_count,
+                    retry_skip_reason=no_retry_reason,
                 )
             )
             results.append(
@@ -1615,6 +2122,7 @@ def process_subunit(
         per_func_diag["identity_state"] = function_verdicts[i].identity_state
         per_func_diag["identity_reason"] = function_verdicts[i].identity_reason
         per_func_diag["target_file_count"] = function_verdicts[i].target_file_count
+        per_func_diag["retry_skip_reason"] = function_verdicts[i].retry_skip_reason
         r["diagnostic"] = per_func_diag
 
     return results
@@ -1649,12 +2157,20 @@ def _retry_with_conversation(
     llm: LLMProvider,
     max_retries: int,
     cfg: Any,
+    budget: TransformBudget,
     ordinal: int = 0,
-) -> list[dict[str, str]]:
+) -> tuple[list[dict[str, str]] | None, str]:
     """Retry fixing compile errors using multi-turn conversation.
 
+    ``budget`` is REQUIRED — the compile-retry cap (``compile_retry_calls_remaining``)
+    is checked via ``_compile_retry_allowed`` before the first send, and the
+    call/token caps are enforced via ``_budgeted_send``.
+
     Sends: original system + original task + model's prior output + error.
-    Iterates up to max_retries times. Returns the last file set (fixed or not).
+    Makes at most 1 retry per function (max_retries loop but compile-retry
+    budget is consumed once at entry; subsequent loop iterations only consume
+    call/token budget).
+
     The retry prompt includes the function ordinal and address and asks the
     LLM to preserve ``// TARGET:`` markers so the output can be re-associated.
 
@@ -1663,14 +2179,56 @@ def _retry_with_conversation(
     expected ordinal and address.  If any record lacks a valid target or
     has a contradictory one, the retry response is rejected (previous files
     are preserved without degradation).
+
+    Returns:
+        ``(files_or_None, skip_reason)`` where:
+        - ``files_or_None``:
+            - ``None`` — no retry was attempted (budget, category, or stagnation
+              prevented it).  Caller produces FAIL_NO_RETRY.
+            - ``list[dict]`` — the (possibly unchanged) file set after retry.
+              Caller must recompile to determine PASS_RETRY vs FAIL_AFTER_RETRY.
+        - ``skip_reason``: empty string when retry was attempted; non-empty
+          explanation when retry was skipped (for diagnostic recording).
     """
+    # GCC retry policy: only retry if the compile error category is actionable.
+    func_addr = func.get("address", "?")
+    category = classify_compile_error(err)
+
     current_files = func_files
     cpp_file = next((f for f in current_files if f["path"].endswith(".cpp")), current_files[0])
-    func_addr = func.get("address", "?")
+
+    retry_allowed, skip_reason = _compile_retry_allowed(
+        category,
+        err,
+        None,
+        budget,
+        budget.subunit_retry_occurred,
+    )
+
     ordinal_str = f" (ordinal {ordinal})"
     expected_target = (ordinal, func_addr.lower())
 
+    if not retry_allowed:
+        log.info("Retry skipped for %s: %s", func_addr, skip_reason)
+        return None, skip_reason  # signal to caller: no retry LLM call was made
+
+    # Consume one compile-retry unit for this function (max 1 per function).
+    budget.compile_retry_calls_remaining -= 1
+
+    _llm_call_made = False
+    prev_stderr_hash: str | None = None
+
     for _ in range(max_retries):
+        if not budget.check_before_call("compile_func_retry"):
+            log.warning("Budget exhausted before func retry for %s", func_addr)
+            break
+        # Stagnation check: identical SHA-256 stderr → retry won't help
+        if prev_stderr_hash is not None and err.strip():
+            current_hash = hashlib.sha256(err.encode()).hexdigest()
+            if current_hash == prev_stderr_hash:
+                log.warning("Stagnant stderr for %s — stopping retry loop", func_addr)
+                break
+        _llm_call_made = True
         prior_output = "\n\n".join(f"// FILE: {f['path']}\n{f['content']}" for f in current_files)
         retry_prompt = (
             f"The following code for function {func_addr}{ordinal_str} "
@@ -1687,7 +2245,17 @@ def _retry_with_conversation(
             Message(role="assistant", content=prior_output),
             Message(role="user", content=retry_prompt),
         ]
-        retry_response = llm.send(retry_messages)
+        send_result = _budgeted_send(llm, retry_messages, budget, "compile_func_retry")
+
+        if send_result.status != "ok":
+            if send_result.status == "budget_exceeded":
+                log.warning("Budget exceeded during func retry for %s", func_addr)
+                return None, "BUDGET_EXCEEDED"
+            # provider_error — signal to caller for PROVIDER_ERROR verdict
+            log.warning("Provider error during func retry for %s", func_addr)
+            return None, "PROVIDER_ERROR"
+        retry_response = send_result.response
+        assert retry_response is not None
         retry_records, retry_has_invalid = _parse_llm_response_records(retry_response)
         # Validate every retry record.
         # An invalid file block (empty path or content) is a protocol error;
@@ -1708,4 +2276,8 @@ def _retry_with_conversation(
         new_compiles, err = _compile_generated_cpp(current_files, cpp_file, cfg)
         if new_compiles:
             break
-    return current_files
+        # Track stderr SHA-256 for stagnation detection in next iteration
+        prev_stderr_hash = hashlib.sha256(err.encode()).hexdigest() if err.strip() else None
+    if not _llm_call_made:
+        return None, "no LLM call made (budget exhausted before first send)"  # signal to caller: no retry
+    return current_files, ""

@@ -95,6 +95,11 @@ build:
     context_window: 3
     cache_enabled: true
     cache_path: ".cr-agent-cache.json"
+    # Global per-invocation transform budget shared across ALL subunits:
+    # initial LLM generation, TARGET recovery, compile retries.
+    max_llm_calls_per_run: 8
+    max_llm_tokens_per_run: 150000
+    max_compile_retry_calls_per_run: 3
 
   validation:
     compile_per_function: true

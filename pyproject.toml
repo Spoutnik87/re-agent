@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "re-agent"
-version = "1.2.0"
+version = "2.0.0"
 description = "Autonomous reverse-engineering agent with a source-aware reverser/checker loop, objective verification, parity checks, and a Ghidra backend"
 readme = "README.md"
 license = "MIT"
@@ -28,6 +28,8 @@ dependencies = [
     "anthropic>=0.40",
     "openai>=1.0",
     "jinja2>=3.0",
+    "networkx>=3.0",
+    "scikit-learn>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -65,6 +67,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+norecursedirs = [".git", ".venv", "__pycache__"]
 markers = [
     "llm: tests that require LLM API keys",
     "ghidra: tests that require ghidra-ai-bridge",
