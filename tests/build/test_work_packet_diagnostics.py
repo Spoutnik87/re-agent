@@ -773,9 +773,9 @@ class TestClassifyCompileError:
             "      |            ^~~~~\n"
             "      |            strtol\n"
         )
-        assert (
-            classify_compile_error(stderr) == "undeclared_identifier"
-        ), "Real error must take priority over decls_header_warning when both appear in stderr"
+        assert classify_compile_error(stderr) == "undeclared_identifier", (
+            "Real error must take priority over decls_header_warning when both appear in stderr"
+        )
 
     def test_compile_frontier_sqrtl_undeclared_classifies_as_undeclared_identifier(self) -> None:
         """'sqrtl' was not declared in this scope → 'undeclared_identifier'.

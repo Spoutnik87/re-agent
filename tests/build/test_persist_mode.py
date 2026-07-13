@@ -738,9 +738,9 @@ def test_persist_false_integration_no_io(monkeypatch: Any, tmp_path: Path) -> No
     # so passed=0 and failed=total.
     assert summary["total"] == 2, f"Expected 2 total results, got {summary['total']}"
     assert summary["passed"] == 0, f"Expected 0 passed (compile skipped), got {summary['passed']}"
-    assert (
-        summary["failed"] == summary["total"]
-    ), f"failed must equal total when compile is skipped, got failed={summary['failed']} total={summary['total']}"
+    assert summary["failed"] == summary["total"], (
+        f"failed must equal total when compile is skipped, got failed={summary['failed']} total={summary['total']}"
+    )
     assert "total_tokens" in summary, "token tracking must still work"
 
 
@@ -878,19 +878,19 @@ def test_persist_false_compile_enabled_still_skips_compile(monkeypatch: Any, tmp
     # ── Assert: each individual result has SKIPPED_COMPILE verdict ──
     assert len(_captured_results) == 2, f"Expected 2 captured results, got {len(_captured_results)}"
     for i, r in enumerate(_captured_results):
-        assert (
-            r["verdict"] == "SKIPPED_COMPILE"
-        ), f"Result {i}: expected verdict='SKIPPED_COMPILE', got {r['verdict']!r}"
+        assert r["verdict"] == "SKIPPED_COMPILE", (
+            f"Result {i}: expected verdict='SKIPPED_COMPILE', got {r['verdict']!r}"
+        )
         assert r["compiles"] is False, f"Result {i}: expected compiles=False, got {r['compiles']}"
 
     # ── Assert: summary matches individual results ──
-    assert summary["total"] == len(
-        _captured_results
-    ), f"summary total={summary['total']} differs from captured {len(_captured_results)}"
+    assert summary["total"] == len(_captured_results), (
+        f"summary total={summary['total']} differs from captured {len(_captured_results)}"
+    )
     assert summary["passed"] == 0, f"Expected 0 passed (compile skipped), got {summary['passed']}"
-    assert (
-        summary["failed"] == summary["total"]
-    ), f"Expected failed == total when compile is skipped, got failed={summary['failed']} total={summary['total']}"
+    assert summary["failed"] == summary["total"], (
+        f"Expected failed == total when compile is skipped, got failed={summary['failed']} total={summary['total']}"
+    )
     assert "total_tokens" in summary
 
 
@@ -963,15 +963,15 @@ def test_persist_false_resume_state_ignored(monkeypatch: Any, tmp_path: Path) ->
     summary = mp.process_modules(cfg, _make_llm_cfg(), module=module_name, persist=False)
 
     # ── Assert: module WAS processed despite resume state ──
-    assert (
-        len(call_log) > 0
-    ), "process_subunit must be called even when resume state exists — persist=False must ignore completed_modules"
+    assert len(call_log) > 0, (
+        "process_subunit must be called even when resume state exists — persist=False must ignore completed_modules"
+    )
     assert summary["total"] == 2, f"Expected 2 functions processed, got {summary['total']}"
 
     # ── Assert: resume file content exactly unchanged (byte-level) ──
     after_content = resume_path.read_bytes()
-    assert (
-        after_content == before_content
-    ), f"Resume file content must NOT change when persist=False — expected:\n{before_content}\ngot:\n{after_content}"
+    assert after_content == before_content, (
+        f"Resume file content must NOT change when persist=False — expected:\n{before_content}\ngot:\n{after_content}"
+    )
     after_mtime = resume_path.stat().st_mtime_ns
     assert after_mtime == before_mtime, "Resume file mtime must NOT change when persist=False"

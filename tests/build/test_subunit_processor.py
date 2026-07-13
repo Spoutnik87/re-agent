@@ -442,12 +442,12 @@ def test_parsed_but_unmatched_multi_file_no_address(monkeypatch) -> None:
         "(distinguishes from true parser failure where marker_count == 0)"
     )
     assert diag.get("parse_count", 0) > 0, "parse_count must be > 0 — FILE blocks were syntactically valid"
-    assert (
-        diag.get("match_strategy") == "none"
-    ), "match_strategy must be 'none' when no address/name matches any parsed file"
-    assert (
-        diag.get("files_written", 999) == 0
-    ), "files_written must be 0; no files should be matched without address/name evidence"
+    assert diag.get("match_strategy") == "none", (
+        "match_strategy must be 'none' when no address/name matches any parsed file"
+    )
+    assert diag.get("files_written", 999) == 0, (
+        "files_written must be 0; no files should be matched without address/name evidence"
+    )
 
     # ── Per-function diagnostic: each func independently unmatched ──
     both_strategies = {r.get("diagnostic", {}).get("match_strategy") for r in results}
@@ -553,9 +553,9 @@ def test_parsed_but_unmatched_distinct_from_parser_failure(monkeypatch) -> None:
     assert results_multi[0]["verdict"] == "NO_OUTPUT"
 
     # ── Subunit-level marker_count distinguishes the two ──
-    assert (
-        diag_multi["marker_count"] != diag_none["marker_count"]
-    ), "parsed-but-unmatched and parser-failure must differ in marker_count"
+    assert diag_multi["marker_count"] != diag_none["marker_count"], (
+        "parsed-but-unmatched and parser-failure must differ in marker_count"
+    )
 
     # ── Parser failure: candidate lists are empty (nothing parsed) ──
     assert diag_none.get("candidate_paths", ["sentinel"]) == [], "parser failure must have empty candidate_paths"
@@ -659,9 +659,9 @@ def test_address_bearing_multi_function_all_match(monkeypatch) -> None:
 
     # ── Address 0x004117c0 matched both .cpp and .h (its addr appears in both paths) ──
     r_a = next(r for r in results if r["function"] == "0x004117c0")
-    assert (
-        r_a["diagnostic"]["files_written"] == 2
-    ), "0x004117c0 should match 2 files (its .cpp and .h both carry the address in path)"
+    assert r_a["diagnostic"]["files_written"] == 2, (
+        "0x004117c0 should match 2 files (its .cpp and .h both carry the address in path)"
+    )
     # ── Address 0x00411800 matched only its .cpp (no .h emitted for it) ──
     r_b = next(r for r in results if r["function"] == "0x00411800")
     assert r_b["diagnostic"]["files_written"] == 1, "0x00411800 should match 1 file (only the .cpp carries its address)"
@@ -717,9 +717,9 @@ def test_compile_per_function_false_skips_all_compile_checks(monkeypatch) -> Non
     }
     results = process_subunit(ctx, "mod", provider, _Cfg(), cache=None)
 
-    assert (
-        compile_called == []
-    ), f"compile_check must not be called when compile_per_function=False, got {len(compile_called)} call(s)"
+    assert compile_called == [], (
+        f"compile_check must not be called when compile_per_function=False, got {len(compile_called)} call(s)"
+    )
     assert len(results) == 2, f"expected 2 results, got {len(results)}"
     for r in results:
         assert r["verdict"] == "SKIPPED_COMPILE", f"expected SKIPPED_COMPILE for {r['function']}, got {r['verdict']}"
@@ -892,9 +892,9 @@ def test_compile_per_function_false_unmatched_still_no_output(monkeypatch) -> No
     assert compile_called == [], "compile_check must not be called when gate is off"
     assert len(results) == 2
     for r in results:
-        assert (
-            r["verdict"] == "NO_OUTPUT"
-        ), f"expected NO_OUTPUT for unmatched function {r['function']}, got {r['verdict']}"
+        assert r["verdict"] == "NO_OUTPUT", (
+            f"expected NO_OUTPUT for unmatched function {r['function']}, got {r['verdict']}"
+        )
         assert r["compiles"] is False
         assert r["files"] == []
         diag = r["diagnostic"]
@@ -934,9 +934,9 @@ def test_compile_per_function_default_true_still_compiles(monkeypatch) -> None:
     # Legacy mode: address-bearing path without TARGET → matched via legacy
     results = process_subunit(ctx, "mod", provider, _min_cfg(), cache=None)
 
-    assert (
-        len(compile_called) >= 1
-    ), f"compile_check should be called at least once by default, got {len(compile_called)} calls"
+    assert len(compile_called) >= 1, (
+        f"compile_check should be called at least once by default, got {len(compile_called)} calls"
+    )
     assert results[0]["verdict"] == "PASS"
     assert results[0]["compiles"] is True
     assert len(results[0]["files"]) > 0
@@ -1055,16 +1055,16 @@ def test_classname_only_no_address_stays_blocked(monkeypatch) -> None:
     assert len(results) == 2, f"Expected 2 function results, got {len(results)}"
 
     for r in results:
-        assert (
-            r["verdict"] == "NO_OUTPUT"
-        ), f"ClassName-only output must produce NO_OUTPUT for {r['function']}, got {r['verdict']}"
+        assert r["verdict"] == "NO_OUTPUT", (
+            f"ClassName-only output must produce NO_OUTPUT for {r['function']}, got {r['verdict']}"
+        )
         assert r["compiles"] is False
         assert r["files"] == [], "no files must be matched for ClassName-only output"
 
         diag = r["diagnostic"]
-        assert (
-            diag.get("match_strategy") == "none"
-        ), f"match_strategy must be 'none' for ClassName-only output on {r['function']}"
+        assert diag.get("match_strategy") == "none", (
+            f"match_strategy must be 'none' for ClassName-only output on {r['function']}"
+        )
         assert diag.get("files_written", 999) == 0, "files_written must be 0 for ClassName-only output"
         assert diag.get("marker_count", 0) > 0, "marker_count must be > 0 (parsed-but-unmatched, not parser failure)"
         # ── Diagnostic enrichment: candidates populated but no addresses/names ──
@@ -1077,9 +1077,9 @@ def test_classname_only_no_address_stays_blocked(monkeypatch) -> None:
         assert not any(has_addr), "candidate_has_address must be all False: ClassName-only paths have no addresses"
 
         has_name = diag.get("candidate_has_name", [True])
-        assert not any(
-            has_name
-        ), "candidate_has_name must be all False: descriptive names don't match target function names"
+        assert not any(has_name), (
+            "candidate_has_name must be all False: descriptive names don't match target function names"
+        )
 
 
 def test_compile_fail_no_retry_captures_stderr_in_diagnostic(monkeypatch, tmp_path) -> None:
@@ -1326,9 +1326,9 @@ def test_parse_llm_response_interior_fence_in_comment_preserved() -> None:
     # Then
     assert len(files) == 1
     # The interior ``` is NOT a standalone fence line and must be preserved
-    assert (
-        files[0]["content"] == "void f() { /* ``` */ }"
-    ), f"Interior triple backtick must be preserved, got {files[0]['content']!r}"
+    assert files[0]["content"] == "void f() { /* ``` */ }", (
+        f"Interior triple backtick must be preserved, got {files[0]['content']!r}"
+    )
 
 
 def test_parse_llm_response_empty_after_strip_fence() -> None:
@@ -1343,9 +1343,9 @@ def test_parse_llm_response_empty_after_strip_fence() -> None:
     files = _parse_llm_response(response)
     # Then — on current code this returns 1 file (content='```cpp\n```',
     # which is truthy). When fence-stripping is added, it should drop to 0.
-    assert (
-        len(files) == 0
-    ), f"Expected 0 files (content after fence-strip would be empty), got {len(files)} file(s): {files!r}"
+    assert len(files) == 0, (
+        f"Expected 0 files (content after fence-strip would be empty), got {len(files)} file(s): {files!r}"
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1391,9 +1391,9 @@ def test_parse_llm_response_adjacent_fenced_file_blocks() -> None:
 
     for f in files:
         for line in f["content"].splitlines():
-            assert not _fence_re.match(
-                line
-            ), f"File {f['path']} contains standalone fence line: {line!r}\nFull content: {f['content']!r}"
+            assert not _fence_re.match(line), (
+                f"File {f['path']} contains standalone fence line: {line!r}\nFull content: {f['content']!r}"
+            )
 
 
 def test_parse_llm_response_adjacent_fenced_bare_blocks() -> None:
@@ -1423,9 +1423,9 @@ def test_parse_llm_response_adjacent_fenced_bare_blocks() -> None:
 
     for f in files:
         for line in f["content"].splitlines():
-            assert not _fence_re.match(
-                line
-            ), f"File {f['path']} contains standalone fence line: {line!r}\nFull content: {f['content']!r}"
+            assert not _fence_re.match(line), (
+                f"File {f['path']} contains standalone fence line: {line!r}\nFull content: {f['content']!r}"
+            )
 
 
 def test_parse_llm_response_adjacent_fenced_safety_backticks() -> None:
@@ -1447,12 +1447,12 @@ def test_parse_llm_response_adjacent_fenced_safety_backticks() -> None:
     files = _parse_llm_response(response)
     assert len(files) == 2, f"Expected 2 files, got {len(files)}"
     # Inline triple backticks must be preserved in both files
-    assert (
-        "``` inline" in files[0]["content"]
-    ), f"Inline triple backticks missing from file.h content: {files[0]['content']!r}"
-    assert (
-        "/* ``` */" in files[1]["content"]
-    ), f"Inline triple backticks missing from file.cpp content: {files[1]['content']!r}"
+    assert "``` inline" in files[0]["content"], (
+        f"Inline triple backticks missing from file.h content: {files[0]['content']!r}"
+    )
+    assert "/* ``` */" in files[1]["content"], (
+        f"Inline triple backticks missing from file.cpp content: {files[1]['content']!r}"
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -1518,9 +1518,9 @@ def test_process_subunit_fence_wrapped_output_stripped_before_compile(monkeypatc
     assert results[0]["compiles"] is True
 
     assert compiled_code[0] is not None, "compile_check must have been called"
-    assert compiled_code[0].startswith(
-        '#include "_decls.h"'
-    ), f"Expected code to start with '#include \"_decls.h\"', got: {compiled_code[0]!r}"
+    assert compiled_code[0].startswith('#include "_decls.h"'), (
+        f"Expected code to start with '#include \"_decls.h\"', got: {compiled_code[0]!r}"
+    )
     assert "0x004117c0" in compiled_code[0]
 
 
@@ -1603,15 +1603,15 @@ def test_process_subunit_include_context_not_passed_to_compile(monkeypatch: Any)
         "first-pass failure collection and final verdict compile"
     )
     called_paths = {f["path"] for f in captured_filesets[0]}
-    assert (
-        "include/renderer/0x004117c0__A.h" in called_paths
-    ), "Generated header must be passed to compile_generated_file_set"
-    assert (
-        "src/renderer/0x004117c0__A.cpp" in called_paths
-    ), "Generated .cpp must be passed to compile_generated_file_set"
-    assert (
-        captured_targets[0] == "src/renderer/0x004117c0__A.cpp"
-    ), f"Target path should be the .cpp path, got {captured_targets[0]}"
+    assert "include/renderer/0x004117c0__A.h" in called_paths, (
+        "Generated header must be passed to compile_generated_file_set"
+    )
+    assert "src/renderer/0x004117c0__A.cpp" in called_paths, (
+        "Generated .cpp must be passed to compile_generated_file_set"
+    )
+    assert captured_targets[0] == "src/renderer/0x004117c0__A.cpp", (
+        f"Target path should be the .cpp path, got {captured_targets[0]}"
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1672,9 +1672,9 @@ def test_process_subunit_adjacent_fenced_h_cpp_reaches_compile_generated_set_fen
         for entry in files:
             content = entry.get("content", "")
             for line in content.splitlines():
-                assert not _fence_re.match(
-                    line
-                ), f"Fence delimiter line leaked into file {entry['path']}: {line!r}\nFull content: {content!r}"
+                assert not _fence_re.match(line), (
+                    f"Fence delimiter line leaked into file {entry['path']}: {line!r}\nFull content: {content!r}"
+                )
         captured_filesets.append(files)
         captured_targets.append(target_path)
         return (True, "")
@@ -1731,19 +1731,19 @@ def test_process_subunit_adjacent_fenced_h_cpp_reaches_compile_generated_set_fen
     assert len(captured_filesets) >= 1, "compile_generated_file_set must have been called at least once"
     first_set = captured_filesets[0]
     first_set_paths = {f["path"] for f in first_set}
-    assert any(
-        p.endswith(".h") for p in first_set_paths
-    ), f"Generated header must appear in compile_generated_file_set: {first_set_paths}"
-    assert any(
-        p.endswith(".cpp") for p in first_set_paths
-    ), f"Generated .cpp must appear in compile_generated_file_set: {first_set_paths}"
+    assert any(p.endswith(".h") for p in first_set_paths), (
+        f"Generated header must appear in compile_generated_file_set: {first_set_paths}"
+    )
+    assert any(p.endswith(".cpp") for p in first_set_paths), (
+        f"Generated .cpp must appear in compile_generated_file_set: {first_set_paths}"
+    )
     assert captured_targets[0].endswith(".cpp"), f"Target path must be the .cpp file, got {captured_targets[0]}"
 
     # ── Explicit failure-path: result files must not contain fence markers ──
     for f in r["files"]:
-        assert (
-            "```" not in f["content"]
-        ), f"File {f['path']} still contains fence markers in result content: {f['content']!r}"
+        assert "```" not in f["content"], (
+            f"File {f['path']} still contains fence markers in result content: {f['content']!r}"
+        )
 
     # ── No extraneous provider calls ──
     assert provider.total_calls == 1, f"Expected 1 provider send, got {provider.total_calls}"
@@ -1863,9 +1863,9 @@ def test_retry_merge_preserves_initial_success(monkeypatch) -> None:
         f"Expected PASS or PASS_RETRY, got {result_a['verdict']}. "
         f"Files: {result_a.get('files', [])}"
     )
-    assert (
-        result_a["compiles"] is True
-    ), f"Function A should still compile after retry, got compiles={result_a['compiles']}"
+    assert result_a["compiles"] is True, (
+        f"Function A should still compile after retry, got compiles={result_a['compiles']}"
+    )
     assert len(result_a.get("files", [])) > 0, "Function A should still have files after partial retry, got empty files"
     # A was PASS on first compile, so it must remain PASS (not PASS_RETRY).
     # Currently the bug turns it into NO_OUTPUT — that is the regression.
@@ -1995,9 +1995,9 @@ def test_retry_merge_by_address_not_file_order(monkeypatch) -> None:
 
     # ── Function B must have both files and retry content ──
     assert result_b["verdict"] != "NO_OUTPUT", "Function B got NO_OUTPUT despite retry providing its files."
-    assert (
-        len(result_b.get("files", [])) == 2
-    ), f"Function B should have 2 files (.h and .cpp), got {len(result_b.get('files', []))}"
+    assert len(result_b.get("files", [])) == 2, (
+        f"Function B should have 2 files (.h and .cpp), got {len(result_b.get('files', []))}"
+    )
     b_paths = [f["path"] for f in result_b["files"]]
     assert any(p.endswith("0x1001__B.h") for p in b_paths), f"0x1001__B.h missing from Function B files: {b_paths}"
     assert any(p.endswith("0x1001__B.cpp") for p in b_paths), f"0x1001__B.cpp missing from Function B files: {b_paths}"
@@ -2262,18 +2262,18 @@ def test_explicit_identity_valid_match(monkeypatch: Any) -> None:
         assert r["compiles"] is True
         assert len(r["files"]) == 2, f"Function {label} expected 2 files, got {len(r['files'])}"
         diag = r["diagnostic"]
-        assert (
-            diag["match_strategy"] == "explicit_identity"
-        ), f"Function {label} match_strategy should be 'explicit_identity', got {diag['match_strategy']!r}"
-        assert (
-            diag["identity_state"] == "explicit"
-        ), f"Function {label} identity_state should be 'explicit', got {diag['identity_state']!r}"
-        assert (
-            diag["identity_reason"] == ""
-        ), f"Function {label} identity_reason should be empty, got {diag['identity_reason']!r}"
-        assert (
-            diag["target_file_count"] == 2
-        ), f"Function {label} target_file_count should be 2, got {diag['target_file_count']}"
+        assert diag["match_strategy"] == "explicit_identity", (
+            f"Function {label} match_strategy should be 'explicit_identity', got {diag['match_strategy']!r}"
+        )
+        assert diag["identity_state"] == "explicit", (
+            f"Function {label} identity_state should be 'explicit', got {diag['identity_state']!r}"
+        )
+        assert diag["identity_reason"] == "", (
+            f"Function {label} identity_reason should be empty, got {diag['identity_reason']!r}"
+        )
+        assert diag["target_file_count"] == 2, (
+            f"Function {label} target_file_count should be 2, got {diag['target_file_count']}"
+        )
 
 
 def test_explicit_identity_preserves_content(monkeypatch: Any) -> None:
@@ -2402,9 +2402,9 @@ def test_explicit_identity_rejects_incomplete_targets(monkeypatch: Any) -> None:
         assert r["compiles"] is False
         assert r["files"] == []
         diag = r["diagnostic"]
-        assert (
-            diag["match_strategy"] == "rejected_identity"
-        ), f"Expected 'rejected_identity' strategy for {r['function']}, got {diag['match_strategy']!r}"
+        assert diag["match_strategy"] == "rejected_identity", (
+            f"Expected 'rejected_identity' strategy for {r['function']}, got {diag['match_strategy']!r}"
+        )
         assert diag["identity_state"] == "rejected"
         assert "Some files lack TARGET markers" in diag["identity_reason"]
         assert diag["target_file_count"] == 0
@@ -2451,9 +2451,9 @@ def test_explicit_identity_rejects_duplicate_target(monkeypatch: Any) -> None:
 
     assert len(results) == 2
     for r in results:
-        assert (
-            r["verdict"] == "INCOMPLETE_TARGETS"
-        ), f"Expected INCOMPLETE_TARGETS for {r['function']}, got {r['verdict']}"
+        assert r["verdict"] == "INCOMPLETE_TARGETS", (
+            f"Expected INCOMPLETE_TARGETS for {r['function']}, got {r['verdict']}"
+        )
         assert r["files"] == []
         assert "contract failed" in r.get("diagnostic", {}).get("identity_reason", "").lower()
 
@@ -2640,13 +2640,13 @@ def test_no_target_fallback_to_address_matching_preserved(monkeypatch: Any) -> N
             "by_name",
             "by_address",
         }, f"Expected 'by_name' or 'by_address' strategy for {r['function']}, got {diag['match_strategy']!r}"
-    assert (
-        diag["identity_state"] == "matched"
-    ), f"Expected identity_state 'matched' for {r['function']}, got {diag['identity_state']!r}"
+    assert diag["identity_state"] == "matched", (
+        f"Expected identity_state 'matched' for {r['function']}, got {diag['identity_state']!r}"
+    )
     # identity_reason is populated with a descriptive message for legacy fallback
-    assert (
-        "legacy" in diag["identity_reason"].lower()
-    ), f"Expected identity_reason to mention legacy fallback, got {diag['identity_reason']!r}"
+    assert "legacy" in diag["identity_reason"].lower(), (
+        f"Expected identity_reason to mention legacy fallback, got {diag['identity_reason']!r}"
+    )
     assert diag["target_file_count"] == 1
 
 
@@ -3092,9 +3092,9 @@ def test_legacy_double_claim_rejected(monkeypatch: Any, _p0_patches: Any) -> Non
     for r in results:
         assert r["verdict"] == "NO_OUTPUT", f"Expected NO_OUTPUT for double-claimed file, got {r['verdict']}"
         diag = r["diagnostic"]
-        assert (
-            diag["match_strategy"] == "rejected_identity"
-        ), f"Expected rejected_identity, got {diag['match_strategy']}"
+        assert diag["match_strategy"] == "rejected_identity", (
+            f"Expected rejected_identity, got {diag['match_strategy']}"
+        )
         assert "contract violation" in diag["identity_reason"].lower() or "claimed" in diag["identity_reason"].lower()
 
 
@@ -3199,14 +3199,14 @@ def test_diagnostic_identity_reason_populated(monkeypatch: Any, _p0_patches: Any
         assert r["verdict"] == "NO_OUTPUT"
         diag = r["diagnostic"]
         # TARGET was present but invalid → rejected_identity (not "none")
-        assert (
-            diag["match_strategy"] == "rejected_identity"
-        ), f"Expected rejected_identity (TARGET present but invalid), got {diag['match_strategy']}"
+        assert diag["match_strategy"] == "rejected_identity", (
+            f"Expected rejected_identity (TARGET present but invalid), got {diag['match_strategy']}"
+        )
         assert diag["identity_state"] == "rejected", f"Expected rejected, got {diag['identity_state']}"
         idr = diag["identity_reason"]
-        assert (
-            "TARGET" in idr or "invalid" in idr.lower() or "malformed" in idr.lower()
-        ), f"identity_reason must mention TARGET/invalid/malformed, got {idr!r}"
+        assert "TARGET" in idr or "invalid" in idr.lower() or "malformed" in idr.lower(), (
+            f"identity_reason must mention TARGET/invalid/malformed, got {idr!r}"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -3237,9 +3237,9 @@ def test_parse_records_empty_file_with_target_rejected(monkeypatch: Any, _p0_pat
     for r in results:
         assert r["verdict"] == "NO_OUTPUT", f"Expected NO_OUTPUT for {r['function']} (empty FILE)"
         diag = r["diagnostic"]
-        assert (
-            diag["match_strategy"] == "rejected_identity"
-        ), f"Expected rejected_identity, got {diag['match_strategy']}"
+        assert diag["match_strategy"] == "rejected_identity", (
+            f"Expected rejected_identity, got {diag['match_strategy']}"
+        )
         assert "TARGET" in diag["identity_reason"]
 
 
@@ -3295,9 +3295,9 @@ def test_parse_records_multiple_target_no_last_wins(monkeypatch: Any, _p0_patche
     for r in results:
         assert r["verdict"] == "NO_OUTPUT", f"Expected NO_OUTPUT for {r['function']}, got {r['verdict']}"
         diag = r["diagnostic"]
-        assert (
-            diag["match_strategy"] == "rejected_identity"
-        ), f"Expected rejected_identity, got {diag['match_strategy']}"
+        assert diag["match_strategy"] == "rejected_identity", (
+            f"Expected rejected_identity, got {diag['match_strategy']}"
+        )
 
 
 def test_p1_target_leak_stripped_from_content(monkeypatch: Any, _p0_patches: Any) -> None:
@@ -3419,9 +3419,9 @@ def test_retry_contradictory_target_rejected(monkeypatch: Any, _p0_retry_patches
         (f["content"] for f in r.get("files", []) if "initial_content" in f["content"]),
         None,
     )
-    assert (
-        initial_content is not None
-    ), f"Initial content must be preserved when retry is rejected. Files: {r.get('files', [])}"
+    assert initial_content is not None, (
+        f"Initial content must be preserved when retry is rejected. Files: {r.get('files', [])}"
+    )
 
 
 def test_retry_initial_explicit_missing_target_rejected(monkeypatch: Any, _p0_retry_patches: Any) -> None:
@@ -3454,18 +3454,18 @@ def test_retry_initial_explicit_missing_target_rejected(monkeypatch: Any, _p0_re
     # Initial had explicit TARGET, retry missing it → retry rejected.
     # The initial association (explicit_identity) must survive.
     diag = r["diagnostic"]
-    assert (
-        diag["match_strategy"] == "explicit_identity"
-    ), f"Initial explicit identity must survive invalid retry, got {diag['match_strategy']}"
+    assert diag["match_strategy"] == "explicit_identity", (
+        f"Initial explicit identity must survive invalid retry, got {diag['match_strategy']}"
+    )
     # Content must be INITIAL (retry was rejected, not merged)
     initial_files = r.get("files", [])
     initial_content = next(
         (f["content"] for f in initial_files if "initial_content" in f["content"]),
         None,
     )
-    assert (
-        initial_content is not None
-    ), f"Initial content must be preserved when retry is rejected. Files: {initial_files}"
+    assert initial_content is not None, (
+        f"Initial content must be preserved when retry is rejected. Files: {initial_files}"
+    )
 
 
 def test_retry_with_conversation_wrong_ordinal_rejected(monkeypatch: Any, _p0_retry_patches: Any) -> None:
@@ -3506,9 +3506,9 @@ def test_retry_with_conversation_wrong_ordinal_rejected(monkeypatch: Any, _p0_re
     # With require_target=False (default): retry is merged (legacy behavior)
     merged_legacy = _merge_retry_records(initial, retry_wrong)
     assert len(merged_legacy) == 1
-    assert (
-        merged_legacy[0].content == "int y;"
-    ), f"Expected retry content merged (legacy), got {merged_legacy[0].content!r}"
+    assert merged_legacy[0].content == "int y;", (
+        f"Expected retry content merged (legacy), got {merged_legacy[0].content!r}"
+    )
 
     # Retry with new path but valid target
     retry_new_valid = [FileRecord(path="b.cpp", content="int z;", target=(0, "0x1000"))]
@@ -3594,18 +3594,18 @@ def test_initial_invalid_file_block_empty_path_rejected(monkeypatch: Any, _p0_pa
     assert compile_called == [], "compile_check must NOT be called when invalid file block detected"
 
     for r in results:
-        assert (
-            r["verdict"] == "NO_OUTPUT"
-        ), f"Expected NO_OUTPUT for {r['function']} (empty FILE path), got {r['verdict']}"
+        assert r["verdict"] == "NO_OUTPUT", (
+            f"Expected NO_OUTPUT for {r['function']} (empty FILE path), got {r['verdict']}"
+        )
         assert r["compiles"] is False
         assert r["files"] == []
         diag = r["diagnostic"]
-        assert (
-            diag["match_strategy"] == "rejected_identity"
-        ), f"Expected rejected_identity, got {diag['match_strategy']}"
-        assert (
-            "empty path or content" in diag["identity_reason"].lower()
-        ), f"identity_reason must mention empty path/content, got {diag['identity_reason']!r}"
+        assert diag["match_strategy"] == "rejected_identity", (
+            f"Expected rejected_identity, got {diag['match_strategy']}"
+        )
+        assert "empty path or content" in diag["identity_reason"].lower(), (
+            f"identity_reason must mention empty path/content, got {diag['identity_reason']!r}"
+        )
 
 
 def test_initial_invalid_file_block_empty_content_rejected(monkeypatch: Any, _p0_patches: Any) -> None:
@@ -3631,9 +3631,9 @@ def test_initial_invalid_file_block_empty_content_rejected(monkeypatch: Any, _p0
     assert r["files"] == []
     diag = r["diagnostic"]
     assert diag["match_strategy"] == "rejected_identity", f"Expected rejected_identity, got {diag['match_strategy']}"
-    assert (
-        "empty path or content" in diag["identity_reason"].lower()
-    ), f"identity_reason must mention empty path/content, got {diag['identity_reason']!r}"
+    assert "empty path or content" in diag["identity_reason"].lower(), (
+        f"identity_reason must mention empty path/content, got {diag['identity_reason']!r}"
+    )
 
 
 def test_initial_invalid_file_block_empty_path_no_target_still_rejected(monkeypatch: Any, _p0_patches: Any) -> None:
@@ -3655,9 +3655,9 @@ def test_initial_invalid_file_block_empty_path_no_target_still_rejected(monkeypa
     r = results[0]
     assert r["verdict"] == "NO_OUTPUT", f"Expected NO_OUTPUT (empty FILE path, no TARGET), got {r['verdict']}"
     diag = r["diagnostic"]
-    assert (
-        diag["match_strategy"] == "rejected_identity"
-    ), f"Expected rejected_identity (invalid file block), got {diag['match_strategy']}"
+    assert diag["match_strategy"] == "rejected_identity", (
+        f"Expected rejected_identity (invalid file block), got {diag['match_strategy']}"
+    )
     assert "empty path or content" in diag["identity_reason"].lower()
 
 
@@ -3676,9 +3676,9 @@ def test_initial_valid_response_no_invalid_flag(monkeypatch: Any, _p0_patches: A
     r = results[0]
     assert r["verdict"] in {"PASS", "PASS_RETRY"}, f"Expected PASS/PASS_RETRY for valid response, got {r['verdict']}"
     diag = r["diagnostic"]
-    assert (
-        diag["match_strategy"] != "rejected_identity"
-    ), f"Valid response must not be rejected, got {diag['match_strategy']}"
+    assert diag["match_strategy"] != "rejected_identity", (
+        f"Valid response must not be rejected, got {diag['match_strategy']}"
+    )
     assert "rejected" not in diag.get("identity_state", "")
 
 
@@ -3745,14 +3745,14 @@ def test_retry_invalid_file_block_preserves_initial(monkeypatch: Any) -> None:
     # (explicit_identity) must survive.  Since compile still fails on retry
     # (the retry was rejected, so the original files are recompiled),
     # verdict is FAIL_NO_RETRY (compile never succeeded).
-    assert (
-        r["verdict"] != "NO_OUTPUT"
-    ), f"Initial association must survive invalid retry; got {r['verdict']}. Files: {r.get('files', [])}"
+    assert r["verdict"] != "NO_OUTPUT", (
+        f"Initial association must survive invalid retry; got {r['verdict']}. Files: {r.get('files', [])}"
+    )
     # Initial content must be preserved (not replaced by invalid retry)
     initial_content_found = any("initial_content" in f["content"] for f in r.get("files", []))
-    assert (
-        initial_content_found
-    ), f"Initial content must be preserved when retry has invalid file block. Files: {r.get('files', [])}"
+    assert initial_content_found, (
+        f"Initial content must be preserved when retry has invalid file block. Files: {r.get('files', [])}"
+    )
 
 
 def test_retry_invalid_file_block_empty_content_preserves_initial(monkeypatch: Any) -> None:
@@ -4272,6 +4272,6 @@ def test_no_persist_with_phase_analyze_rejected() -> None:
     persist = not args.no_persist
     phase = args.phase
     # This is the exact check cmd_build does â€” return code 2
-    assert (
-        not persist and phase is not None and phase != "transform"
-    ), "Validation should have rejected --no-persist with --phase analyze"
+    assert not persist and phase is not None and phase != "transform", (
+        "Validation should have rejected --no-persist with --phase analyze"
+    )

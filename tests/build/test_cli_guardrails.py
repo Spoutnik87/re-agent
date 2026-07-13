@@ -381,9 +381,9 @@ def test_guardrail_max_subunits_no_overflow(monkeypatch, tmp_path: Path) -> None
     # artificially inflate the count.
     mp.process_modules(cfg, _make_llm_cfg(), module="renderer", max_subunits=99)
 
-    assert (
-        processed_count[0] == 2
-    ), f"All 2 subunits should be processed (bounded by available, not limit), got {processed_count[0]}"
+    assert processed_count[0] == 2, (
+        f"All 2 subunits should be processed (bounded by available, not limit), got {processed_count[0]}"
+    )
 
 
 def test_guardrail_max_subunits_global_across_modules(monkeypatch, tmp_path: Path) -> None:
@@ -1307,9 +1307,9 @@ def test_resume_completes_and_persists(monkeypatch: Any, tmp_path: Path) -> None
 
     # State file should now have renderer in completed_modules
     saved = json.loads(state_path.read_text(encoding="utf-8"))
-    assert "renderer" in saved.get(
-        "completed_modules", []
-    ), f"renderer should be in completed_modules after successful resume, got {saved}"
+    assert "renderer" in saved.get("completed_modules", []), (
+        f"renderer should be in completed_modules after successful resume, got {saved}"
+    )
 
 
 def test_resume_with_failure_does_not_complete(monkeypatch: Any, tmp_path: Path) -> None:
@@ -1344,6 +1344,6 @@ def test_resume_with_failure_does_not_complete(monkeypatch: Any, tmp_path: Path)
     mp.process_modules(cfg, _make_llm_cfg())
 
     saved = json.loads(state_path.read_text(encoding="utf-8"))
-    assert "renderer" not in saved.get(
-        "completed_modules", []
-    ), f"renderer should NOT be in completed_modules after failed resume, got {saved}"
+    assert "renderer" not in saved.get("completed_modules", []), (
+        f"renderer should NOT be in completed_modules after failed resume, got {saved}"
+    )
