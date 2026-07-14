@@ -1,0 +1,22 @@
+schema: spec-driven
+
+context: |
+  Language: French
+  Write artifacts in French. Keep technical terms, code, commands, file paths,
+  identifiers, and OpenSpec keywords in English.
+
+  Project: re-agent is a generic Python reverse-engineering and reconstruction
+  orchestration tool. It MUST contain no target-specific BGE, game, ABI, or
+  toolchain behavior. Target-specific inputs, build recipes, harnesses, and
+  evidence producers are external adapters.
+
+rules:
+  proposal:
+    - Keep proposals under 1500 words.
+    - Always include a "Non-goals" section.
+  design:
+    - Separate generic core responsibilities from adapter responsibilities.
+    - Never claim that compilation or static analysis proves ABI or behavioral parity.
+  tasks:
+    - Break tasks into independently testable vertical slices.
+    - Include relevant lint, type, test, and integration validation.

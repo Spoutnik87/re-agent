@@ -397,6 +397,11 @@ def test_valid_contracts_config_ok(tmp_path: Path) -> None:
     assert config.contracts.transformation_policy == "preserve_abi"
     assert Path(config.contracts.abi_manifest_path).resolve() == manifest_path.resolve()
     assert config.contracts.abi_manifest_sha256 == manifest_sha
+    verified = config.contracts.verified_manifest
+    assert verified is not None
+    assert verified.resolved_path == manifest_path.resolve()
+    assert verified.raw_sha256 == manifest_sha
+    assert verified.canonical_sha256 == verified.manifest.sha256_hash
 
 
 def test_relative_manifest_path_resolved_against_yaml_dir(tmp_path: Path) -> None:

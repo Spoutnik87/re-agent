@@ -18,6 +18,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from re_agent.build.transform.manifest_bound_transform import ManifestBoundVerdict
+from re_agent.cli.cmd_build import cmd_build
 from re_agent.cli.main import build_parser
 
 # ---------------------------------------------------------------------------
@@ -39,6 +41,18 @@ def test_build_parser_module_defaults_none() -> None:
     parser = build_parser()
     args = parser.parse_args(["build"])
     assert args.module is None
+
+
+def test_build_parser_address_defaults_none() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["build"])
+    assert args.address is None
+
+
+def test_build_parser_accepts_address_arg() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["build", "--phase", "transform", "--address", "0x401000"])
+    assert args.address == "0x401000"
 
 
 def test_build_parser_accepts_subunit_arg() -> None:
@@ -71,6 +85,168 @@ def test_build_parser_max_subunits_defaults_none() -> None:
     parser = build_parser()
     args = parser.parse_args(["build"])
     assert args.max_subunits is None
+
+
+def test_no_persist_report_is_exact_json(monkeypatch, capsys, tmp_path) -> None:
+    cfg = SimpleNamespace(
+        build=SimpleNamespace(),
+        llm=SimpleNamespace(),
+        pipeline=SimpleNamespace(state_file=str(tmp_path / "state")),
+        contracts=SimpleNamespace(transformation_policy="preserve_abi", verified_manifest=object()),
+    )
+    monkeypatch.setattr("re_agent.cli.cmd_build.load_config", lambda _path: cfg)
+    monkeypatch.setattr(
+        "re_agent.build.transform.manifest_bound_transform.run_manifest_bound_transform",
+        lambda *args, **kwargs: SimpleNamespace(
+            address=0x401000,
+            path="unit/fn.cpp",
+            verdict=ManifestBoundVerdict.SKIPPED_COMPILE,
+            compiles=False,
+        ),
+    )
+    args = build_parser().parse_args(
+        [
+            "--config",
+            str(tmp_path / "config.yml"),
+            "build",
+            "--phase",
+            "transform",
+            "--address",
+            "0x401000",
+            "--no-persist",
+        ]
+    )
+    assert cmd_build(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "run_type": "no-persist",
+        "exit_code": 0,
+        "summary": {
+            "total": 1,
+            "passed": 0,
+            "failed": 1,
+            "incomplete": 0,
+            "hard_rejects": 0,
+            "budget_exceeded": 0,
+            "provider_errors": 0,
+            "contract_failed": False,
+        },
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_calls": 0},
+        "budget": {
+            "calls_remaining": 0,
+            "tokens_remaining": 0,
+            "compile_retry_calls_remaining": 0,
+            "exceeded": False,
+            "exceeded_reason": "",
+        },
+        "results": [
+            {
+                "function": "0x401000",
+                "verdict": "SKIPPED_COMPILE",
+                "compiles": False,
+                "files_matched": 1,
+                "match_strategy": "explicit_identity",
+                "identity_state": "explicit",
+                "identity_reason": "",
+                "compile_error_category": None,
+                "files": [{"path": "unit/fn.cpp"}],
+            }
+        ],
+    }
+
+
+def test_no_persist_error_report_is_exact_json(monkeypatch, capsys, tmp_path) -> None:
+    cfg = SimpleNamespace(
+        build=SimpleNamespace(),
+        llm=SimpleNamespace(),
+        pipeline=SimpleNamespace(state_file=str(tmp_path / "state")),
+        contracts=SimpleNamespace(transformation_policy="preserve_abi", verified_manifest=object()),
+    )
+    monkeypatch.setattr("re_agent.cli.cmd_build.load_config", lambda _path: cfg)
+    monkeypatch.setattr(
+        "re_agent.build.transform.manifest_bound_transform.run_manifest_bound_transform",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("provider down")),
+    )
+    args = build_parser().parse_args(
+        [
+            "--config",
+            str(tmp_path / "config.yml"),
+            "build",
+            "--phase",
+            "transform",
+            "--address",
+            "0x401000",
+            "--no-persist",
+        ]
+    )
+    assert cmd_build(args) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "run_type": "no-persist",
+        "exit_code": 2,
+        "summary": {
+            "total": 1,
+            "passed": 0,
+            "failed": 1,
+            "incomplete": 0,
+            "hard_rejects": 0,
+            "budget_exceeded": 0,
+            "provider_errors": 1,
+            "contract_failed": True,
+        },
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_calls": 0},
+        "budget": {
+            "calls_remaining": 0,
+            "tokens_remaining": 0,
+            "compile_retry_calls_remaining": 0,
+            "exceeded": False,
+            "exceeded_reason": "",
+        },
+        "results": [],
+    }
+
+
+def test_persistent_preserve_failure_marks_completed_state_failed(monkeypatch, tmp_path, capsys) -> None:
+    state_path = tmp_path / "pipeline.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "pipeline_version": "1.0",
+                "phases": {"reverse": {"status": "completed"}, "build": {"status": "completed"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = SimpleNamespace(
+        build=SimpleNamespace(),
+        llm=SimpleNamespace(),
+        pipeline=SimpleNamespace(state_file=str(state_path)),
+        contracts=SimpleNamespace(transformation_policy="preserve_abi", verified_manifest=object()),
+    )
+    monkeypatch.setattr("re_agent.cli.cmd_build.load_config", lambda _path: cfg)
+    monkeypatch.setattr(
+        "re_agent.build.transform.manifest_bound_transform.run_manifest_bound_transform",
+        lambda *args, **kwargs: SimpleNamespace(
+            successful=False,
+            verdict=ManifestBoundVerdict.COMPILE_FAIL,
+            compiler_log="failed",
+            address=0x401000,
+            compiles=False,
+        ),
+    )
+    args = build_parser().parse_args(
+        [
+            "--config",
+            str(tmp_path / "config.yml"),
+            "build",
+            "--phase",
+            "transform",
+            "--address",
+            "0x401000",
+        ]
+    )
+    assert cmd_build(args) == 2
+    assert json.loads(state_path.read_text(encoding="utf-8"))["phases"]["build"]["status"] == "failed"
 
 
 def test_build_parser_accepts_run_id_arg() -> None:
@@ -738,6 +914,7 @@ def _fake_process_modules_mixed(*a: Any, **kw: Any) -> dict:
 def _make_cmd_build_args(
     no_persist: bool = False,
     phase: str | None = "transform",
+    address: str | None = None,
     module: str | None = None,
     subunit: int | None = None,
     max_subunits: int | None = None,
@@ -748,11 +925,46 @@ def _make_cmd_build_args(
         config="",
         no_persist=no_persist,
         phase=phase,
+        address=address,
         module=module,
         subunit=subunit,
         max_subunits=max_subunits,
         run_id=run_id,
     )
+
+
+def _make_preserve_abi_config() -> SimpleNamespace:
+    return SimpleNamespace(
+        build=SimpleNamespace(output=SimpleNamespace(target_dir="")),
+        llm=SimpleNamespace(model="test"),
+        pipeline=SimpleNamespace(state_file=""),
+        contracts=SimpleNamespace(transformation_policy="preserve_abi"),
+    )
+
+
+def test_cmd_build_preserve_abi_transform_requires_address(monkeypatch: Any, capsys: Any) -> None:
+    import re_agent.cli.cmd_build as cb
+
+    monkeypatch.setattr(cb, "load_config", lambda *a, **kw: _make_preserve_abi_config())
+    rc = cb.cmd_build(_make_cmd_build_args(phase="transform"))
+    assert rc == 2
+    assert "requires exactly one --address" in capsys.readouterr().err
+
+
+def test_cmd_build_preserve_abi_rejects_bulk_and_assemble(monkeypatch: Any) -> None:
+    import re_agent.cli.cmd_build as cb
+
+    monkeypatch.setattr(cb, "load_config", lambda *a, **kw: _make_preserve_abi_config())
+    for phase in (None, "assemble"):
+        assert cb.cmd_build(_make_cmd_build_args(phase=phase)) == 2
+
+
+def test_cmd_build_preserve_abi_rejects_address_with_module_or_subunit(monkeypatch: Any) -> None:
+    import re_agent.cli.cmd_build as cb
+
+    monkeypatch.setattr(cb, "load_config", lambda *a, **kw: _make_preserve_abi_config())
+    assert cb.cmd_build(_make_cmd_build_args(address="0x401000", module="renderer")) == 2
+    assert cb.cmd_build(_make_cmd_build_args(address="0x401000", subunit=2)) == 2
 
 
 def test_cmd_build_no_persist_phase_none_exit2(monkeypatch: Any) -> None:

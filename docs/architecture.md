@@ -284,5 +284,40 @@ without it is rejected with a clear error. There is no legacy fallback.
 Use `re-agent init --abi-manifest <PATH>` to generate a config with the
 contracts section pre-populated.
 
+### Preserve-ABI Mode semantics
+
+When `contracts.transformation_policy` is `"preserve_abi"`,
+`re-agent build --phase transform --address 0xADDRESS` interface activates
+single-function manifest binding. The run performs these steps:
+
+1. Resolves `0xADDRESS` against the ABI manifest's `symbols` array.
+2. Supplies the manifest entry's declared signature and calling convention to the prompt, and validates the exact output path.
+3. Runs the LLM transform on the single function.
+4. Compiles the output.
+
+A successful compilation produces the composite verdict **MANIFEST_BOUND/COMPILE_PASS**:
+
+- **MANIFEST_BOUND**: the function address was matched to a manifest entry and
+  the response uses its exact declared output path. Signature and calling
+  convention are prompt constraints, not independently verified evidence.
+- **COMPILE_PASS**: the generated code compiles successfully under the
+  configured compiler flags.
+
+This verdict is **neither an ABI proof nor a behavioral proof**. It does not
+execute the compiled code, compare it against the original binary's disassembly,
+or verify semantic equivalence. It is a build-quality gate, not a correctness
+verification.
+
+**Current refusals:** the following invocations are rejected with exit code 2
+and a diagnostic message before any LLM call or disk operation:
+
+| Invocation | Refused | Reason |
+|------------|---------|--------|
+| `re-agent build` (no `--phase`) | Yes | Bulk all-phase run cannot satisfy per-address manifest binding |
+| `re-agent build --phase analyze` | No | Analysis remains available; it does not transform or publish ABI-bound code |
+| `re-agent build --phase assemble` | Yes | Expects a full module tree, incompatible with single-function binding |
+| `re-agent build --phase transform` (no `--address`) | Yes | Bulk transform processes multiple subunits, not a single entry |
+| `re-agent build --phase transform --address 0xADDRESS` | No | Single-function manifest-bound transform — the only accepted form |
+
 See [docs/configuration.md#abi-contracts](docs/configuration.md#abi-contracts) for the full
 configuration reference.

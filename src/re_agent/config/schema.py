@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from re_agent.contracts.model import AbiManifest
+from re_agent.contracts.runtime import VerifiedContract
+
 
 @dataclass
 class LLMConfig:
@@ -266,6 +269,10 @@ class ContractsConfig:
     transformation_policy: Literal["preserve_abi"] | None = None
     abi_manifest_path: str = ""
     abi_manifest_sha256: str = ""
+    # Populated only by load_config after the manifest and both hashes have
+    # been verified.  Keeping this out of YAML makes reopening an unchecked
+    # manifest unnecessary for downstream consumers.
+    verified_manifest: VerifiedContract[AbiManifest] | None = None
 
     def __post_init__(self) -> None:
         if self.transformation_policy is None:

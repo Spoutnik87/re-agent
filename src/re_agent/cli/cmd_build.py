@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -10,10 +11,65 @@ from re_agent.config.loader import load_config
 from re_agent.state.pipeline_state import PipelineState
 
 
+def _dry_report(
+    exit_code: int,
+    summary: dict[str, object],
+    results: list[dict[str, object]] | None = None,
+    *,
+    usage: dict[str, int] | None = None,
+    budget: dict[str, object] | None = None,
+) -> None:
+    complete_summary: dict[str, object] = {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "incomplete": 0,
+        "hard_rejects": 0,
+        "budget_exceeded": 0,
+        "provider_errors": 0,
+        "contract_failed": exit_code != 0,
+    }
+    for key in complete_summary:
+        if key in summary:
+            complete_summary[key] = summary[key]
+    print(
+        json.dumps(
+            {
+                "run_type": "no-persist",
+                "exit_code": exit_code,
+                "summary": complete_summary,
+                "usage": usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_calls": 0},
+                "budget": budget
+                or {
+                    "calls_remaining": 0,
+                    "tokens_remaining": 0,
+                    "compile_retry_calls_remaining": 0,
+                    "exceeded": False,
+                    "exceeded_reason": "",
+                },
+                "results": results or [],
+            },
+            separators=(",", ":"),
+        )
+    )
+
+
 def cmd_build(args: argparse.Namespace) -> int:
+    dry_run = bool(getattr(args, "no_persist", False))
+
+    def cli_error(message: str) -> int:
+        if dry_run:
+            _dry_report(2, {"error": message})
+        else:
+            print(message, file=sys.stderr)
+        return 2
+
     try:
         config = load_config(Path(args.config))
     except (ValueError, FileNotFoundError) as exc:
+        if dry_run:
+            _dry_report(2, {"error": str(exc)})
+            return 2
         print(f"Config error: {exc}", file=sys.stderr)
         return 2
     build_cfg = config.build
@@ -21,21 +77,53 @@ def cmd_build(args: argparse.Namespace) -> int:
     pipeline_cfg = config.pipeline
 
     persist = not getattr(args, "no_persist", False)
+    phase = getattr(args, "phase", None)
+    address = getattr(args, "address", None)
+    module = getattr(args, "module", None)
+    subunit = getattr(args, "subunit", None)
+
+    # ABI-preserving builds must be explicit and bounded.  Keep these checks
+    # at the CLI boundary so an invalid invocation cannot start a mutating
+    # phase before it is rejected.
+    contracts_cfg = getattr(config, "contracts", None)
+    preserve_abi = getattr(contracts_cfg, "transformation_policy", None) == "preserve_abi"
+    if address is not None and (module is not None or subunit is not None):
+        return cli_error("Error: --address cannot be combined with --module or --subunit")
+    if address is not None and getattr(args, "max_subunits", None) is not None:
+        return cli_error("Error: --address cannot be combined with --max-subunits")
+    if address is not None and not preserve_abi:
+        return cli_error("Error: --address is only valid with contracts transformation_policy=preserve_abi")
+    if preserve_abi:
+        if phase == "analyze" and address is not None:
+            return cli_error("Error: --phase analyze cannot be combined with --address")
+        if phase != "transform" and address is not None:
+            return cli_error("Error: --address is only valid with --phase transform")
+        if phase == "analyze" and any(x is not None for x in (module, subunit, getattr(args, "max_subunits", None))):
+            return cli_error("Error: preserve_abi analyze does not accept transform selectors")
+        if phase == "transform" and address is None:
+            return cli_error("Error: --phase transform with preserve_abi requires exactly one --address")
+        if phase in (None, "assemble"):
+            phase_label = "all phases" if phase is None else "--phase assemble"
+            return cli_error(f"Error: preserve_abi does not allow {phase_label}; use --phase analyze")
 
     # --no-persist is only valid with an explicit --phase transform.
     # With --phase analyze, --phase assemble, or no --phase (which runs
     # all phases including analyze/assemble), --no-persist would silently
     # skip writes — this is a user error.
-    phase = getattr(args, "phase", None)
     if not persist and phase != "transform":
         phase_label = phase if phase else "(all phases)"
-        print(
-            f"Error: --no-persist is only valid with --phase transform (got --phase {phase_label})",
-            file=sys.stderr,
-        )
-        return 2
+        return cli_error(f"Error: --no-persist is only valid with --phase transform (got --phase {phase_label})")
 
     state = PipelineState(pipeline_cfg.state_file) if persist else None
+
+    def preserve_failure(message: str) -> int:
+        if persist and state is not None:
+            state.update_build("failed")
+            state.flush()
+            print(message, file=_out)
+        else:
+            _dry_report(2, {"error": message})
+        return 2
 
     phases = [phase] if phase else ["analyze", "transform", "assemble"]
 
@@ -74,15 +162,153 @@ def cmd_build(args: argparse.Namespace) -> int:
         if "transform" in phases:
             if persist:
                 print("=== Phase 2/3: Transform (LLM code refinement) ===")
-            summary = process_modules(
-                build_cfg,
-                llm_cfg,
-                module=getattr(args, "module", None),
-                subunit=getattr(args, "subunit", None),
-                max_subunits=getattr(args, "max_subunits", None),
-                run_id=getattr(args, "run_id", "") or "",
-                persist=persist,
-            )
+            if preserve_abi:
+                from re_agent.build.transform.manifest_bound_transform import (
+                    ManifestBoundTransformError,
+                    ManifestBoundVerdict,
+                    run_manifest_bound_transform,
+                )
+
+                try:
+                    if contracts_cfg is None or address is None:
+                        raise ManifestBoundTransformError(
+                            "preserve_abi transform requires a verified manifest and address"
+                        )
+                    result = run_manifest_bound_transform(
+                        build_cfg,
+                        llm_cfg,
+                        contracts_cfg.verified_manifest,
+                        address,
+                        run_id=getattr(args, "run_id", "") or "",
+                        persist=persist,
+                    )
+                except ManifestBoundTransformError as exc:
+                    if not persist:
+                        _dry_report(2, {"total": 1, "failed": 1, "hard_rejects": 1})
+                    else:
+                        return preserve_failure(f"Transform rejected: {exc}")
+                    return 2
+                except Exception as exc:
+                    # Provider/compiler integration failures are non-committing
+                    # failures; do not let the CLI continue into assemble.
+                    if not persist:
+                        _dry_report(2, {"total": 1, "failed": 1, "provider_errors": 1})
+                    else:
+                        return preserve_failure(f"Transform failed: {exc}")
+                    return 2
+                if persist and not result.successful:
+                    return preserve_failure("Transform rejected: incomplete or unknown manifest-bound verdict")
+                if not persist and result.verdict in (
+                    ManifestBoundVerdict.PROVIDER_ERROR,
+                    ManifestBoundVerdict.BUDGET_EXCEEDED,
+                ):
+                    result_entry = {
+                        "function": f"0x{result.address:X}",
+                        "verdict": result.verdict.value,
+                        "compiles": False,
+                        "files_matched": 0,
+                        "match_strategy": "explicit_identity",
+                        "identity_state": "explicit",
+                        "identity_reason": result.error,
+                        "compile_error_category": None,
+                        "files": [],
+                    }
+                    _dry_report(
+                        2,
+                        {
+                            "total": 1,
+                            "failed": 1,
+                            "provider_errors": result.provider_errors,
+                            "budget_exceeded": int(result.verdict is ManifestBoundVerdict.BUDGET_EXCEEDED),
+                            "contract_failed": True,
+                        },
+                        [result_entry],
+                        usage=getattr(result, "usage", None),
+                        budget=getattr(result, "budget", None),
+                    )
+                    return 2
+                if not persist and result.verdict is ManifestBoundVerdict.VALIDATION_ERROR:
+                    _dry_report(
+                        2,
+                        {"total": 1, "failed": 1, "hard_rejects": 1, "contract_failed": True},
+                        [
+                            {
+                                "function": f"0x{result.address:X}",
+                                "verdict": result.verdict.value,
+                                "compiles": False,
+                                "files_matched": 0,
+                                "match_strategy": "rejected_identity",
+                                "identity_state": "rejected",
+                                "identity_reason": result.error,
+                                "compile_error_category": None,
+                                "files": [],
+                            }
+                        ],
+                        usage=getattr(result, "usage", None),
+                        budget=getattr(result, "budget", None),
+                    )
+                    return 2
+                if result.verdict == "COMPILE_FAIL":
+                    if not persist:
+                        _dry_report(
+                            2,
+                            {"error": "compilation failed"},
+                            [
+                                {
+                                    "function": f"0x{result.address:X}",
+                                    "verdict": result.verdict.value,
+                                    "compiles": False,
+                                    "files_matched": 0,
+                                    "match_strategy": None,
+                                    "identity_state": None,
+                                    "identity_reason": "",
+                                    "compile_error_category": "compile",
+                                    "files": [],
+                                }
+                            ],
+                        )
+                    else:
+                        return preserve_failure(f"Transform rejected: compilation failed\n{result.compiler_log}")
+                    return 2
+                if not persist:
+                    if result.verdict is not ManifestBoundVerdict.SKIPPED_COMPILE or result.compiles:
+                        _dry_report(2, {"error": "invalid dry-run verdict"})
+                        return 2
+                    _dry_report(
+                        0,
+                        {"total": 1, "failed": 1},
+                        [
+                            {
+                                "function": f"0x{result.address:X}",
+                                "verdict": result.verdict.value,
+                                "compiles": False,
+                                "files_matched": 1,
+                                "match_strategy": "explicit_identity",
+                                "identity_state": "explicit",
+                                "identity_reason": "",
+                                "compile_error_category": None,
+                                "files": [{"path": result.path}],
+                            }
+                        ],
+                        usage=getattr(result, "usage", None),
+                        budget=getattr(result, "budget", None),
+                    )
+                    return 0
+                print(
+                    f"Transform complete: MANIFEST_BOUND + COMPILE_PASS for 0x{result.address:x}",
+                    file=_out,
+                )
+                summary = {"total": 1, "passed": 1, "incomplete": 0, "budget_exceeded": 0}
+            else:
+                summary = process_modules(
+                    build_cfg,
+                    llm_cfg,
+                    module=getattr(args, "module", None),
+                    subunit=getattr(args, "subunit", None),
+                    max_subunits=getattr(args, "max_subunits", None),
+                    run_id=getattr(args, "run_id", "") or "",
+                    persist=persist,
+                )
             if persist and state is not None:
                 state.update_build("in_progress", phase="transform", modules_completed=[])
 
@@ -90,7 +316,7 @@ def cmd_build(args: argparse.Namespace) -> int:
             passed = summary.get("passed", 0)
             incomplete = summary.get("incomplete", 0)
             budget_exceeded = summary.get("budget_exceeded", 0)
-            contract_failed = summary.get("contract_failed", False)
+            contract_failed = bool(summary.get("contract_failed", False))
 
             if total > 0 and passed > 0:
                 parts = [f"{passed}/{total} functions compiled"]

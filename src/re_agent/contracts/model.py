@@ -6,7 +6,7 @@ import enum
 from dataclasses import dataclass
 
 
-class Architecture(str, enum.Enum):
+class Architecture(enum.StrEnum):
     """Target CPU architecture."""
 
     X86 = "x86"
@@ -15,7 +15,7 @@ class Architecture(str, enum.Enum):
     ARM64 = "aarch64"
 
 
-class CallingConvention(str, enum.Enum):
+class CallingConvention(enum.StrEnum):
     """Calling convention for a symbol."""
 
     CDECL = "cdecl"

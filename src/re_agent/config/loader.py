@@ -31,7 +31,7 @@ from re_agent.config.schema import (
     ReverseOutputConfig,
     ValidationConfig,
 )
-from re_agent.contracts import load_verified_manifest
+from re_agent.contracts import AbiManifest, VerifiedContract, load_verified_manifest
 
 _log = logging.getLogger(__name__)
 _T = TypeVar("_T")
@@ -222,7 +222,7 @@ def _build_build_config(data: dict[str, Any]) -> BuildConfig:
     )
 
 
-def _validate_contracts(contracts: ContractsConfig, yaml_dir: Path | None) -> None:
+def _validate_contracts(contracts: ContractsConfig, yaml_dir: Path | None) -> VerifiedContract[AbiManifest]:
     """Validate contracts configuration fail-fast using ``load_verified_manifest``.
 
     This is a *breaking migration*: any YAML config without a properly
@@ -279,9 +279,16 @@ def _validate_contracts(contracts: ContractsConfig, yaml_dir: Path | None) -> No
 
     # ── Delegate to contracts module (loads JSON, validates raw hash) ──
     try:
-        load_verified_manifest(manifest_path, expected_raw_hash=sha256_hex)
+        manifest, raw_hash, canonical_hash = load_verified_manifest(manifest_path, expected_raw_hash=sha256_hex)
     except ValueError as exc:
         raise ValueError(f"ABI manifest validation failed: {exc}") from exc
+
+    return VerifiedContract(
+        manifest=manifest,
+        resolved_path=manifest_path.resolve(),
+        raw_sha256=raw_hash,
+        canonical_sha256=canonical_hash,
+    )
 
 
 def _validate_hex(hex_str: str) -> None:
@@ -307,7 +314,7 @@ def _build_config(raw: dict[str, Any], yaml_path: Path | None = None) -> ReAgent
 
     # Always validate contracts (breaking migration — no legacy bypass)
     yaml_dir = yaml_path.parent if yaml_path is not None else None
-    _validate_contracts(config.contracts, yaml_dir)
+    config.contracts.verified_manifest = _validate_contracts(config.contracts, yaml_dir)
 
     return config
 

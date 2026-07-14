@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +40,7 @@ class PipelineState:
     def _save(self) -> None:
         self._dirty = False
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._data["last_pipeline_run"] = datetime.now(timezone.utc).isoformat()
+        self._data["last_pipeline_run"] = datetime.now(UTC).isoformat()
         self.path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
 
     def get_reverse_status(self) -> str:
@@ -56,7 +56,7 @@ class PipelineState:
         self._data["phases"]["reverse"] = {
             **existing,
             "status": status,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             **kwargs,
         }
         self._dirty = True
@@ -68,7 +68,7 @@ class PipelineState:
         self._data["phases"]["build"] = {
             **existing,
             "status": status,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             **kwargs,
         }
         self._dirty = True
