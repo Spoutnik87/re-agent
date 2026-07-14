@@ -7,6 +7,8 @@
 
 ## Installation
 
+Requires Python 3.11+. Install via pip:
+
 ```bash
 pip install re-agent
 ```
@@ -134,6 +136,37 @@ re-agent build --run-id "my-experiment-001"
 
 The `--run-id` is forwarded to diagnostics and evidence paths for traceability
 (WorkPacket JSON files under `optimization.diagnostics_dir`).
+
+## Preserve-ABI Mode
+
+With `contracts.transformation_policy: preserve_abi`, the build pipeline
+enforces single-function manifest binding for Transform. The supported Transform invocation is:
+
+```bash
+re-agent build --phase transform --address 0xADDRESS
+```
+
+This binds the transformed artifact to a specific ABI manifest entry (by
+address and exact output path; signature and calling convention are supplied to
+the LLM prompt). A successful
+compilation produces **MANIFEST_BOUND/COMPILE_PASS**.
+
+> **⚠ This is not an ABI proof or a behavioral proof.** It confirms manifest
+> conformance and compilation — no runtime, disassembly, or semantic-equivalence
+> check is performed.
+
+**Currently refused invocations:**
+
+| Invocation | Refused | Reason |
+|------------|---------|--------|
+| `re-agent build` (no `--phase`) | Yes | Bulk all-phase run cannot satisfy per-address manifest binding |
+| `re-agent build --phase analyze` | No | Analysis remains available; it does not transform or publish ABI-bound code |
+| `re-agent build --phase assemble` | Yes | Expects a full module tree, incompatible with single-function binding |
+| `re-agent build --phase transform` (no `--address`) | Yes | Bulk transform processes multiple subunits, not a single entry |
+| `re-agent build --phase transform --address 0xADDRESS` | No | Single-function manifest-bound transform — the only accepted form |
+
+Refusals produce exit code 2 with a diagnostic message before any LLM call or
+disk operation.
 
 ## --no-persist Mode
 

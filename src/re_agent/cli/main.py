@@ -35,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     build_p.add_argument(
         "--phase", choices=["analyze", "transform", "assemble"], default=None, help="Run a single build phase"
     )
+    build_p.add_argument("--address", default=None, help="Single function address for ABI-preserving transform")
     build_p.add_argument("--module", default=None, help="Restrict transform to a single module name")
     build_p.add_argument("--subunit", type=int, default=None, help="Start at this subunit index for --module")
     build_p.add_argument(

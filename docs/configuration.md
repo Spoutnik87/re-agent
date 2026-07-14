@@ -93,6 +93,32 @@ The manifest-layer hash is validated when the manifest is loaded by
 `load_manifest()`. Both must pass before an operational command finishes
 loading its configuration.
 
+### Preserve-ABI Transform: `--address` flag
+
+`re-agent build --phase transform --address 0xADDRESS`
+operates in preserve_abi mode (`contracts.transformation_policy: preserve_abi`).
+It binds the transformed artifact to a single ABI manifest entry: the LLM output
+is validated for its target address and exact output path; the declared signature
+and calling convention are supplied to the prompt. A successful compilation produces the composite
+verdict **MANIFEST_BOUND/COMPILE_PASS**.
+
+> **⚠ This composite verdict is not an ABI proof.** It confirms manifest
+> conformance and compilation only — no runtime, disassembly, or
+> semantic-equivalence check is performed. It is not a behavioral proof.
+
+**Current refusals in preserve_abi mode:**
+
+| Invocation | Refused | Reason |
+|------------|---------|--------|
+| `re-agent build` (no `--phase`) | Yes | Bulk all-phase run cannot satisfy per-address manifest binding |
+| `re-agent build --phase analyze` | No | Analysis remains available; it does not transform or publish ABI-bound code |
+| `re-agent build --phase assemble` | Yes | Expects a full module tree, incompatible with single-function binding |
+| `re-agent build --phase transform` (no `--address`) | Yes | Bulk transform processes multiple subunits, not a single entry |
+| `re-agent build --phase transform --address 0xADDRESS` | No | Single-function manifest-bound transform — the only accepted form |
+
+Refusals produce exit code 2 with a diagnostic message before any LLM call or
+disk operation.
+
 ### Generating the Config Hash
 
 ```bash
