@@ -80,7 +80,7 @@ re-agent build
 
 | Command | Description |
 |---------|-------------|
-| `re-agent init` | Generate `re-agent.yaml` config file |
+| `re-agent init --abi-manifest PATH` | Generate `re-agent.yaml` config file |
 | `re-agent reverse --address ADDR` | Reverse a single function |
 | `re-agent reverse --class CLASS` | Reverse all functions in a class |
 | `re-agent reverse --address ADDR --no-optimize` | Disable token optimizations |
@@ -243,11 +243,14 @@ pip install re-agent
 ## Quick Start
 
 ```bash
-# 1. Initialize project config
-re-agent init
+# 1. Initialize project config with an ABI manifest
+re-agent init --abi-manifest <PATH_TO_ABI_MANIFEST>
 
-# 2. Edit re-agent.yaml with your project settings
-#    Add project_description and project_context for better results
+# 2. Edit re-agent.yaml with your LLM API key, Ghidra bridge path.
+#    ⚠ The 'contracts' section is now required by ALL operational commands
+#      (reverse, parity, status, pipeline, build). Without it every command
+#      that loads a config file fails with a clear error.
+#    See docs/configuration.md#abi-contracts for details.
 
 # 3. Reverse a single function
 re-agent reverse --address 0x6F86A0
@@ -255,10 +258,13 @@ re-agent reverse --address 0x6F86A0
 # 4. Reverse all functions in a class
 re-agent reverse --class CTrain --max-functions 10
 
-# 5. Run parity checks
+# 5. Run the build pipeline
+re-agent build
+
+# 6. Run parity checks
 re-agent parity --address 0x6F86A0
 
-# 6. Check progress
+# 7. Check progress
 re-agent status
 
 # 7. Reconstruct C++ source from reversed code
@@ -269,7 +275,26 @@ re-agent build --phase analyze                    # analyze only
 
 ## Configuration
 
+### Layered System
+
 re-agent uses a layered configuration system (highest priority first): CLI flags > environment variables (`RE_AGENT_*`) > `re-agent.yaml` > defaults.
+
+### Breaking Migration: ABI Contracts
+
+**This version introduces a breaking migration.** The `contracts` section is now **required by all operational commands** (`reverse`, `parity`, `status`, `pipeline`, `build`). Any existing `re-agent.yaml` without it is rejected with a clear error. There is no legacy fallback. See [docs/configuration.md#abi-contracts](docs/configuration.md#abi-contracts).
+
+```yaml
+contracts:
+  transformation_policy: "preserve_abi"       # mandatory, only valid value
+  abi_manifest_path: "abi_manifest.json"       # relative to re-agent.yaml
+  abi_manifest_sha256: "abc123..."            # raw SHA-256 of manifest file
+```
+
+- `abi_manifest_path` is resolved **relative to the YAML config file's directory**.
+- `abi_manifest_sha256` is the raw SHA-256 hex digest of the manifest file bytes — computed with `sha256sum`, not the manifest's internal canonical hash.
+- The ABI manifest is a **generic, versioned contract format**. See [docs/configuration.md#abi-contracts](docs/configuration.md#abi-contracts) for the full schema.
+
+### Full YAML Reference
 
 ```yaml
 llm:
@@ -278,6 +303,11 @@ llm:
   block_model: null          # optional cheaper model for block reversals
   # api_key: set via RE_AGENT_LLM_API_KEY env var
   timeout_s: 1800
+
+contracts:
+  transformation_policy: "preserve_abi"
+  abi_manifest_path: "abi_manifest.json"
+  abi_manifest_sha256: "abc123..."
 
 pipeline:
   state_file: "pipeline-state.json"

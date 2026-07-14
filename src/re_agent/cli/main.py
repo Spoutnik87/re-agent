@@ -17,7 +17,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # init
     init_p = sub.add_parser("init", help="Initialize re-agent.yaml config file")
-    init_p.add_argument("--profile", default=None, help="Use a built-in project profile template")
+    init_p.add_argument("--abi-manifest", required=True, help="Path to a valid ABI manifest JSON file (required)")
+    init_p.add_argument("--profile", default=None, help=argparse.SUPPRESS)
 
     # reverse
     rev_p = sub.add_parser("reverse", help="Reverse engineer functions (Phase 1)")

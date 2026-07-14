@@ -11,15 +11,24 @@ CLI → Config → Orchestrator → Agent Loop → LLM Providers
                   |
                   v
            Parity Engine
+
+                  │
+                  ▼
+          Build Pipeline
+    analyze → transform → assemble
 ```
 
-## Layers
+## Phase 1 — Reverse
+
+CLI → Config → Orchestrator → Agent Loop → LLM Providers + RE Backend (Ghidra)
+
+### Layers
 
 - **CLI**: argparse entry points (init, reverse, build, parity, status)
-- **Config**: YAML + env + CLI overlay, project profiles
+- **Config**: YAML + env + CLI overlay, project profiles, **ABI contracts** (breaking migration)
 - **Orchestrator**: Single function or class-level auto-advance
 - **Agents**: Reverser + Checker with fix loop
-- **LLM**: Protocol-based providers (Claude, Codex)
+- **LLM**: Protocol-based providers (Claude, Codex, OpenAI-compat)
 - **Backend**: RE tool abstraction with capability flags
 - **Parity**: 11-signal verification engine with scoring
 - **Reports**: JSON/markdown output, session tracking
@@ -221,3 +230,59 @@ Located at `src/re_agent/build/prompts/`:
 | `transform_system.md` | System prompt for code reconstruction agent |
 | `transform_task.md` | Task prompt with module context + functions to transform |
 | `repair_system.md` | System prompt for compile-error repair mode |
+
+---
+
+## Contracts Layer
+
+The contracts layer pins the binary's ABI surface via an external manifest.
+The manifest is **validated and pinned at config load time**, but its symbols
+are **not yet consumed by the Transform phase**. This is the foundational step:
+the manifest must exist, be valid, and pass integrity checks before any
+operational command proceeds.
+
+```
+re-agent.yaml                    abi_manifest.json
+┌────────────────────┐          ┌─────────────────────┐
+│ contracts:         │  path→   │ version: "1.0.0"    │
+│   transformation_  │  resolve │ architecture: "x86" │
+│     policy:        │  ───────→│ pointer_size: 4     │
+│     "preserve_abi" │  rel YAML│ symbols: [...]      │
+│   abi_manifest_    │  dir     │ sha256_hash: "..."  │
+│     path: "..."    │          └─────────────────────┘
+│   abi_manifest_    │               │
+│     sha256: "..."  │  raw hash     │ canonical hash
+│                   │  verifies │    │ verifies
+└────────┬──────────┘  ────────┘    ┘
+         │           load_config()   load_manifest()
+         │           fail-fast       fail-fast
+         v
+   All operational commands
+   (reverse / parity / status / pipeline / build)
+```
+
+### Key Properties
+
+- **Generic**: the `AbiManifest` model supports x86, x64, arm, aarch64 — not
+  tied to any specific binary. The core contains **no target-specific rules**.
+- **Versioned**: manifests carry a semver `version` string.
+- **Self-hashing**: the internal `sha256_hash` is computed over canonical JSON
+  with itself blanked, enabling tamper detection.
+- **Fail-fast**: missing policy, bad hash, unknown keys, path traversal — all
+  raise immediately during config or manifest loading.
+
+### Breaking Migration
+
+The `contracts` section is **mandatory** when loading `re-agent.yaml`.
+This means every operational command — `reverse`, `parity`, `status`,
+`pipeline`, `build` — enforces it. Only `re-agent init` can be run without
+a pre-existing config.
+
+`contracts.transformation_policy` must be `"preserve_abi"`. Any config
+without it is rejected with a clear error. There is no legacy fallback.
+
+Use `re-agent init --abi-manifest <PATH>` to generate a config with the
+contracts section pre-populated.
+
+See [docs/configuration.md#abi-contracts](docs/configuration.md#abi-contracts) for the full
+configuration reference.

@@ -12,7 +12,11 @@ from re_agent.reverse.reports.formatter import format_result
 
 
 def cmd_reverse(args: argparse.Namespace) -> int:
-    config = load_config(Path(args.config))
+    try:
+        config = load_config(Path(args.config))
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
+        return 2
     rev_cfg = config.reverse
 
     if args.max_rounds is not None:

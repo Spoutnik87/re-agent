@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from re_agent.config.loader import load_config
@@ -13,7 +14,11 @@ from re_agent.state.pipeline_state import PipelineState
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    config = load_config(Path(args.config))
+    try:
+        config = load_config(Path(args.config))
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"Config error: {exc}", file=sys.stderr)
+        return 2
 
     if args.phase == "reverse":
         session = Session(config.reverse.output.session_file)

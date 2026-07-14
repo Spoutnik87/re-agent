@@ -1,5 +1,10 @@
 # Getting Started
 
+> **⚠ BREAKING MIGRATION** — The `contracts` section in `re-agent.yaml` is
+> now **required by all operational commands** (`reverse`, `parity`, `status`,
+> `pipeline`, `build`). See
+> [configuration.md#abi-contracts](configuration.md#abi-contracts).
+
 ## Installation
 
 ```bash
@@ -8,12 +13,27 @@ pip install re-agent
 
 ## Quick Start
 
-1. Initialize configuration:
+1. Initialize configuration with your ABI manifest:
 ```bash
-re-agent init
+re-agent init --abi-manifest <PATH_TO_ABI_MANIFEST>
 ```
 
-2. Edit `re-agent.yaml` with your LLM API key and Ghidra bridge path.
+2. Edit `re-agent.yaml`: add your LLM API key and Ghidra bridge path. The
+   required `contracts` section is populated by `init --abi-manifest`:
+
+```yaml
+contracts:
+  transformation_policy: "preserve_abi"
+  abi_manifest_path: "abi_manifest.json"
+  abi_manifest_sha256: "<64-char SHA-256 of your manifest file>"
+```
+
+The manifest is a generic JSON file describing your binary's ABI surface.
+Create it externally, then compute its SHA-256:
+
+```bash
+sha256sum abi_manifest.json
+```
 
 3. Reverse a single function:
 ```bash
@@ -25,12 +45,22 @@ re-agent reverse --address 0x6F86A0 --class CTrain
 re-agent reverse --class CTrain --max-functions 5
 ```
 
-5. Run parity checks:
+5. Run the build pipeline:
+```bash
+re-agent build          # analyze → transform → assemble
+```
+
+6. Or run end-to-end:
+```bash
+re-agent pipeline       # reverse → build
+```
+
+7. Run parity checks:
 ```bash
 re-agent parity --limit 50
 ```
 
-6. Check progress:
+8. Check progress:
 ```bash
 re-agent status
 ```
@@ -213,3 +243,6 @@ re-agent build --phase transform --no-persist > results.json
 # Or pipe to jq for verification
 re-agent build --phase transform --no-persist | python -c "import json,sys; d=json.load(sys.stdin); exit(0 if d['exit_code'] == 0 else d['exit_code'])"
 ```
+
+See [configuration.md](configuration.md) for the full config reference and
+[architecture.md](architecture.md) for the pipeline design.

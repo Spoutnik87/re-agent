@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 
 @dataclass
@@ -248,12 +249,52 @@ class PipelineConfig:
 
 
 @dataclass
+class ContractsConfig:
+    """ABI contract preservation configuration (required, breaking migration).
+
+    ``transformation_policy`` is the only supported value — ``"preserve_abi"``.
+    This is a *breaking migration*: all config files **must** include a
+    ``contracts`` section.  There is no legacy fallback.
+
+    Both ``abi_manifest_path`` and ``abi_manifest_sha256`` must be non-empty
+    strings pointing to a valid ABI manifest and its SHA-256 digest.
+
+    Validation is fail-fast during config loading — a missing manifest path,
+    an empty hash, or an unrecognised policy value raises ``ValueError``.
+    """
+
+    transformation_policy: Literal["preserve_abi"] | None = None
+    abi_manifest_path: str = ""
+    abi_manifest_sha256: str = ""
+
+    def __post_init__(self) -> None:
+        if self.transformation_policy is None:
+            return
+        valid_policies: set[object] = {"preserve_abi"}
+        if self.transformation_policy not in valid_policies:
+            raise ValueError(
+                f"contracts.transformation_policy={self.transformation_policy!r} is not supported. "
+                f"Valid values: {' | '.join(sorted(str(v) for v in valid_policies))}"
+            )
+        if not self.abi_manifest_path.strip():
+            raise ValueError(
+                "contracts.abi_manifest_path must be a non-empty path when contracts.transformation_policy is set."
+            )
+        if not self.abi_manifest_sha256.strip():
+            raise ValueError(
+                "contracts.abi_manifest_sha256 must be a non-empty SHA-256 digest "
+                "when contracts.transformation_policy is set."
+            )
+
+
+@dataclass
 class ReAgentConfig:
     """Top-level unified configuration for re-agent (reverse + build + pipeline)."""
 
     llm: LLMConfig = field(default_factory=LLMConfig)
     reverse: ReverseConfig = field(default_factory=ReverseConfig)
     build: BuildConfig = field(default_factory=BuildConfig)
+    contracts: ContractsConfig = field(default_factory=ContractsConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
     @classmethod
