@@ -58,18 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
     build_p = sub.add_parser("build", help="Reconstruct project from flat .cpp files (Phase 2)")
     build_p.add_argument(
         "--phase",
-        choices=["analyze", "transform", "assemble", "link", "package", "verify-recipe"],
+        choices=["transform", "link", "package", "verify-recipe"],
         default=None,
         help="Run a single build phase (project mode also accepts link/package/verify-recipe)",
     )
-    build_p.add_argument("--address", default=None, help="Single function address for ABI-preserving transform")
-    build_p.add_argument("--module", default=None, help="Restrict transform to a single module name")
-    build_p.add_argument("--subunit", type=int, default=None, help="Start at this subunit index for --module")
-    build_p.add_argument(
-        "--max-subunits", type=int, default=None, help="Process at most this many subunits in transform"
-    )
     build_p.add_argument("--run-id", default=None, help="Run identifier for diagnostics/evidence paths")
-    build_p.add_argument("--project-root", default=None, help="Owned generic project root (project mode)")
+    build_p.add_argument("--project-root", required=True, help="Owned generic project root")
     build_p.add_argument("--profile", default=None, help="Transient generic toolchain profile (project mode only)")
     build_p.add_argument(
         "--verify-recipe", action="store_true", help="Validate the project build recipe without running it"
@@ -77,12 +71,6 @@ def build_parser() -> argparse.ArgumentParser:
     build_p.add_argument(
         "--allow-partial", action="store_true", help="Deprecated; project builds never publish partial results"
     )
-    build_p.add_argument(
-        "--no-persist",
-        action="store_true",
-        help="Dry-run transform: skip all disk writes (no temp dirs, no state, no cache, no report)",
-    )
-
     # pipeline
     pipe_p = sub.add_parser("pipeline", help="Run full pipeline: reverse then build")
     pipe_p.add_argument("--address", help="Single function address (delegated to reverse)")
@@ -90,6 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     pipe_p.add_argument("--max-functions", type=int, default=None, help="Max functions (delegated to reverse)")
     pipe_p.add_argument("--skip-reverse", action="store_true", help="Skip reverse phase, run build only")
     pipe_p.add_argument("--skip-build", action="store_true", help="Skip build phase, run reverse only")
+    pipe_p.add_argument("--project-root", help="Owned generic project root for the build phase")
     pipe_p.add_argument("--skip-parity", action="store_true", help="Skip parity check")
 
     # parity

@@ -153,7 +153,7 @@ def test_failed_target_blocks_recipe_invocation(project, monkeypatch: pytest.Mon
 
 
 def test_stale_or_incomplete_checkpoint_blocks_recipe(project) -> None:
-    assert _run(project, "--phase", "assemble", "--run-id", "missing-checkpoint") == 2
+    assert _run(project, "--phase", "link", "--run-id", "missing-checkpoint") == 2
     assert project.recipe_calls == []
 
 
@@ -165,7 +165,7 @@ def test_checkpoints_without_matching_immutable_run_identity_are_not_reused(proj
     assert (run_root / "checkpoints.json").is_file()
     identity.unlink()
 
-    assert _run(project, "--phase", "assemble", "--run-id", "interrupted") == 2
+    assert _run(project, "--phase", "link", "--run-id", "interrupted") == 2
     assert not (project.root / "build" / "builds" / "interrupted").exists()
 
 
@@ -176,13 +176,13 @@ def test_checkpoints_cannot_be_relabeled_under_a_different_run_identity(project)
     relabeled.mkdir(parents=True)
     shutil.copyfile(original / "checkpoints.json", relabeled / "checkpoints.json")
 
-    assert _run(project, "--phase", "assemble", "--run-id", "relabeled") == 2
+    assert _run(project, "--phase", "link", "--run-id", "relabeled") == 2
     assert not (project.root / "build" / "builds" / "relabeled").exists()
 
     payload = json.loads((original / "run.json").read_text(encoding="utf-8"))
     payload["project_fingerprint"] = _digest(b"different-project")
     (original / "run.json").write_text(json.dumps(payload), encoding="utf-8")
-    assert _run(project, "--phase", "assemble", "--run-id", "original") == 2
+    assert _run(project, "--phase", "link", "--run-id", "original") == 2
 
 
 @pytest.mark.parametrize("corruption", ["stale-source", "missing-object"])
@@ -262,7 +262,7 @@ def test_failed_recipe_preserves_previous_active_publication(project, monkeypatc
         lambda *_args: (failing, SimpleNamespace(executable_sha256=_digest(b"tool"))),
     )
     assert _run(project, "--phase", "transform", "--run-id", "failed-recipe") == 0
-    assert _run(project, "--phase", "assemble", "--run-id", "failed-recipe") == 2
+    assert _run(project, "--phase", "link", "--run-id", "failed-recipe") == 2
     assert load_active_build(project.root / "build") == before
 
 
@@ -270,9 +270,10 @@ def test_allow_partial_is_rejected_in_project_mode(project) -> None:
     assert _run(project, "--allow-partial") == 2
 
 
-@pytest.mark.parametrize("phase", ["link", "package", "verify-recipe"])
-def test_project_only_modes_require_project_root(tmp_path: Path, phase: str) -> None:
-    assert main(["--config", str(tmp_path / "config.yml"), "build", "--phase", phase]) == 2
+def test_build_parser_requires_project_root(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--config", str(tmp_path / "config.yml"), "build", "--phase", "link"])
+    assert exc_info.value.code == 2
 
 
 def test_verify_recipe_runs_disposable_witness(project) -> None:

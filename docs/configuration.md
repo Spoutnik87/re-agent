@@ -93,32 +93,6 @@ The manifest-layer hash is validated when the manifest is loaded by
 `load_manifest()`. Both must pass before an operational command finishes
 loading its configuration.
 
-### Preserve-ABI Transform: `--address` flag
-
-`re-agent build --phase transform --address 0xADDRESS`
-operates in preserve_abi mode (`contracts.transformation_policy: preserve_abi`).
-It binds the transformed artifact to a single ABI manifest entry: the LLM output
-is validated for its target address and exact output path; the declared signature
-and calling convention are supplied to the prompt. A successful compilation produces the composite
-verdict **MANIFEST_BOUND/COMPILE_PASS**.
-
-> **⚠ This composite verdict is not an ABI proof.** It confirms manifest
-> conformance and compilation only — no runtime, disassembly, or
-> semantic-equivalence check is performed. It is not a behavioral proof.
-
-**Current refusals in preserve_abi mode:**
-
-| Invocation | Refused | Reason |
-|------------|---------|--------|
-| `re-agent build` (no `--phase`) | Yes | Bulk all-phase run cannot satisfy per-address manifest binding |
-| `re-agent build --phase analyze` | No | Analysis remains available; it does not transform or publish ABI-bound code |
-| `re-agent build --phase assemble` | Yes | Expects a full module tree, incompatible with single-function binding |
-| `re-agent build --phase transform` (no `--address`) | Yes | Bulk transform processes multiple subunits, not a single entry |
-| `re-agent build --phase transform --address 0xADDRESS` | No | Single-function manifest-bound transform — the only accepted form |
-
-Refusals produce exit code 2 with a diagnostic message before any LLM call or
-disk operation.
-
 ### Generating the Config Hash
 
 ```bash
@@ -233,9 +207,12 @@ reverse:
     objective_control_flow_tolerance: 2
 ```
 
-## Build Config
+## Project Build Config
 
-The `build:` section controls the code reconstruction pipeline (analyze → transform → assemble).
+The `build:` section supplies defaults consumed by the project build surface.
+It is not a standalone build workspace: build commands require
+`--project-root`, which provides the verified project snapshot, contract, and
+publication directories.
 
 ```yaml
 build:
@@ -249,9 +226,7 @@ build:
     compiler: "C:\\msys64\\mingw32\\bin\\g++.exe"
     compiler_flags: "-std=c++23 -m32 -c -Wall"
     target_dir: "output/"
-    # Keep "." for the full pipeline: Assemble reads intermediates from the CWD.
-    work_dir: "."
-    # Optional: Analyze writes this declaration header only when configured.
+    work_dir: "build/work"
     decls_header: ".ghidra-exports/_decls.h"
 
   project:
@@ -284,7 +259,7 @@ build:
   validation:
     compile_per_function: true
     compile_per_module: true
-    compile_final_project: true  # Reserved; not applied by the current pipeline.
+    compile_final_project: true
     max_compile_retries: 1
     target_contract_mode: "legacy"   # legacy | required
 
@@ -297,8 +272,8 @@ build:
 
 | Section | Required | Description |
 |---------|----------|-------------|
-| `input` |  | Source decompiled files and Ghidra exports (defaults provided) |
-| `output` |  | Compiler flags and output paths (defaults provided) |
+| `input` |  | Project snapshot inputs and exports |
+| `output` |  | Compiler flags and staging/output paths |
 | `project` | | Project metadata and naming conventions |
 | `modules` | | Module clustering constraints (min/max size) |
 | `optimization` | | LLM budget, caching, subunit batching |
@@ -346,14 +321,38 @@ build:
     state_path: "cr-agent-state.json"
 ```
 
-Resume allows interrupted `re-agent build` runs to pick up where they left off.
+Resume allows interrupted project transform runs to pick up where they left off.
 The state file tracks `completed_modules`, `current_module`, and `current_subunit`.
 Disable for clean runs or when module clustering has changed.
 
-`decls_header` is optional. When configured, Analyze writes the declaration header to
-that path; make it available to the transformed sources if their generated includes use it.
-For a full Analyze → Transform → Assemble run, keep `output.work_dir` as `"."`:
-Assemble currently reads intermediate artifacts from the current working directory.
+`decls_header` is optional. Project transform may generate it in the project
+workspace. Intermediate files belong under the project build area; they are
+not read from or written to the caller's launch directory.
+
+### Toolchain profiles
+
+Project builds resolve compiler/linker capabilities in one of two ways:
+
+- **Activated profile**: omit `--profile`. The project root's authenticated
+  `toolchain/active.link` chain is loaded and its fingerprints are verified.
+- **Transient profile**: pass `--profile PATH`. The profile is resolved for this
+  invocation only; no activation files are written. Only the commands required
+  by the requested capability are fingerprinted.
+
+The selected toolchain identity is included in build evidence.
+
+### Project build phases and publication
+
+Use `re-agent build --project-root PATH` with `--phase transform`, `link`,
+`package`, or `verify-recipe`. There is no project analysis phase and no
+legacy direct mode. Project builds reject legacy per-function, partial-work,
+and partial-publication selectors.
+
+Transform produces a complete staged result. Link/package and recipe
+verification consume that project-owned staging area. Evidence is validated
+before publication; any missing target, identity mismatch, recipe/toolchain
+failure, or stale artifact rejects the run. Publication is atomic and
+all-or-nothing, so a failed run leaves the previously active build unchanged.
 
 ## Breaking Changes from v1.x
 
