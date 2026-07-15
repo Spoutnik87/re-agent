@@ -56,6 +56,8 @@ def _dry_report(
 
 def cmd_build(args: argparse.Namespace) -> int:
     dry_run = bool(getattr(args, "no_persist", False))
+    project_root_raw = getattr(args, "project_root", None)
+    profile_raw = getattr(args, "profile", None)
 
     def cli_error(message: str) -> int:
         if dry_run:
@@ -64,8 +66,21 @@ def cmd_build(args: argparse.Namespace) -> int:
             print(message, file=sys.stderr)
         return 2
 
+    if profile_raw and not project_root_raw:
+        return cli_error("Error: --profile requires --project-root")
+    project_context = None
+    if project_root_raw:
+        try:
+            from re_agent.project.context import load_verified_project
+
+            project_context = load_verified_project(Path(project_root_raw))
+        except (OSError, ValueError) as exc:
+            return cli_error(f"Project error: {exc}")
     try:
-        config = load_config(Path(args.config))
+        if project_context is None:
+            config = load_config(Path(args.config))
+        else:
+            config = load_config(Path(args.config), verified_contract_override=project_context.verified_abi_manifest)
     except (ValueError, FileNotFoundError) as exc:
         if dry_run:
             _dry_report(2, {"error": str(exc)})
@@ -75,6 +90,9 @@ def cmd_build(args: argparse.Namespace) -> int:
     build_cfg = config.build
     llm_cfg = config.llm
     pipeline_cfg = config.pipeline
+    if project_context is not None:
+        build_cfg.input.ghidra_exports = str(project_context.snapshot_root)
+        config.contracts.verified_manifest = project_context.verified_abi_manifest
 
     persist = not getattr(args, "no_persist", False)
     phase = getattr(args, "phase", None)
@@ -87,6 +105,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     # phase before it is rejected.
     contracts_cfg = getattr(config, "contracts", None)
     preserve_abi = getattr(contracts_cfg, "transformation_policy", None) == "preserve_abi"
+    verified_compile_command = None
     if address is not None and (module is not None or subunit is not None):
         return cli_error("Error: --address cannot be combined with --module or --subunit")
     if address is not None and getattr(args, "max_subunits", None) is not None:
@@ -113,6 +132,18 @@ def cmd_build(args: argparse.Namespace) -> int:
     if not persist and phase != "transform":
         phase_label = phase if phase else "(all phases)"
         return cli_error(f"Error: --no-persist is only valid with --phase transform (got --phase {phase_label})")
+
+    if project_context is not None and persist and phase == "transform":
+        try:
+            from re_agent.toolchain.activation import resolve_capability
+
+            (verified_compile_command,) = resolve_capability(
+                project_root=project_context.root,
+                capability="compile",
+                profile_path=Path(profile_raw) if profile_raw else None,
+            )
+        except ValueError as exc:
+            return cli_error(f"Toolchain error: {exc}")
 
     state = PipelineState(pipeline_cfg.state_file) if persist else None
 
@@ -181,6 +212,7 @@ def cmd_build(args: argparse.Namespace) -> int:
                         address,
                         run_id=getattr(args, "run_id", "") or "",
                         persist=persist,
+                        verified_compile_command=verified_compile_command,
                     )
                 except ManifestBoundTransformError as exc:
                     if not persist:

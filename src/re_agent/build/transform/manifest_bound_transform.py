@@ -22,6 +22,7 @@ from typing import Any
 
 from re_agent.contracts.model import AbiManifest, Symbol
 from re_agent.contracts.runtime import VerifiedContract
+from re_agent.toolchain.activation import VerifiedCommand, verify_command
 
 __all__ = [
     "ManifestBoundTransformError",
@@ -213,6 +214,7 @@ def run_manifest_bound_transform(
     persist: bool = True,
     provider: Any = None,
     compile_fn: Callable[[Path, Path, Any], tuple[bool, str, str]] | None = None,
+    verified_compile_command: VerifiedCommand | None = None,
 ) -> ManifestBoundResult:
     """Execute the bounded, single-symbol preserve-ABI transform.
 
@@ -221,6 +223,8 @@ def run_manifest_bound_transform(
     are prepared in a private staging directory and published only after the
     response and compile gate have succeeded.
     """
+    if compile_fn is not None and verified_compile_command is not None:
+        raise ManifestBoundTransformError("compile_fn and verified_compile_command are mutually exclusive")
     if not isinstance(verified_contract, VerifiedContract):
         raise ManifestBoundTransformError("contracts.verified_manifest must be a VerifiedContract")
     manifest = verified_contract.manifest
@@ -373,9 +377,12 @@ def run_manifest_bound_transform(
     staged_source.parent.mkdir(parents=True, exist_ok=True)
     staged_source.write_text(artifact.source, encoding="utf-8")
     staged_object = staging / (Path(artifact.path).stem + ".o")
-    if compile_fn is None:
-        compile_fn = _compile_real
-    compiles, compiler_log, command = compile_fn(staged_source, staged_object, build_cfg)
+    if verified_compile_command is not None:
+        compiles, compiler_log, command = _compile_verified(staged_source, staged_object, verified_compile_command)
+    else:
+        if compile_fn is None:
+            compile_fn = _compile_real
+        compiles, compiler_log, command = compile_fn(staged_source, staged_object, build_cfg)
     if not compiles or not staged_object.is_file() or staged_object.stat().st_size == 0:
         shutil.rmtree(run_dir, ignore_errors=True)
         return ManifestBoundResult(
@@ -426,6 +433,18 @@ def run_manifest_bound_transform(
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _compile_verified(source: Path, object_path: Path, command: VerifiedCommand) -> tuple[bool, str, str]:
+    """Compile using an immutable capability profile, never legacy defaults."""
+    verify_command(command)
+    argv = [*command.argv, "-o", str(object_path), str(source)]
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=60, shell=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc), json.dumps(argv)
+    output = (completed.stdout or "") + (completed.stderr or "")
+    return completed.returncode == 0, output, json.dumps(argv)
 
 
 def _usage_delta(start: Any, end: Any) -> dict[str, int]:

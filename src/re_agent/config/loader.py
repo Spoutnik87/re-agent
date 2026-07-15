@@ -229,6 +229,14 @@ def _validate_contracts(contracts: ContractsConfig, yaml_dir: Path | None) -> Ve
     configured ``contracts`` section is rejected with a clear error.
     There is no legacy fallback.
 
+    .. note::
+
+        This function is **only called in the legacy (no-override) path**.
+        Project-mode callers that supply ``verified_contract_override`` skip
+        this entirely — the override already carries a pre-validated
+        ``VerifiedContract[AbiManifest]`` whose external path/hash
+        requirements are satisfied by the project context.
+
     Raises
     ------
     ValueError
@@ -251,6 +259,18 @@ def _validate_contracts(contracts: ContractsConfig, yaml_dir: Path | None) -> Ve
         raise ValueError(
             f"contracts.transformation_policy={contracts.transformation_policy!r} "
             "is not supported. Only 'preserve_abi' is valid."
+        )
+
+    # ── External path/hash presence (fail-closed for legacy) ────────────
+    if not contracts.abi_manifest_path.strip():
+        raise ValueError(
+            "contracts.abi_manifest_path must be a non-empty path "
+            "when contracts.transformation_policy is set (legacy mode)."
+        )
+    if not contracts.abi_manifest_sha256.strip():
+        raise ValueError(
+            "contracts.abi_manifest_sha256 must be a non-empty SHA-256 digest "
+            "when contracts.transformation_policy is set (legacy mode)."
         )
 
     # ── Resolve manifest path (relative to YAML config dir) ─────────────
@@ -301,7 +321,12 @@ def _validate_hex(hex_str: str) -> None:
         raise ValueError(f"Not valid hexadecimal: {hex_str!r}") from err
 
 
-def _build_config(raw: dict[str, Any], yaml_path: Path | None = None) -> ReAgentConfig:
+def _build_config(
+    raw: dict[str, Any],
+    yaml_path: Path | None = None,
+    *,
+    verified_contract_override: VerifiedContract[AbiManifest] | None = None,
+) -> ReAgentConfig:
     llm = _build_with_coercion(LLMConfig, raw.get("llm", {}))
     reverse = _build_reverse_config(raw.get("reverse", {}))
     build = _build_build_config(raw.get("build", {}))
@@ -312,9 +337,35 @@ def _build_config(raw: dict[str, Any], yaml_path: Path | None = None) -> ReAgent
     pipeline = _build_with_coercion(PipelineConfig, raw.get("pipeline", {}))
     config = ReAgentConfig(llm=llm, reverse=reverse, build=build, contracts=contracts, pipeline=pipeline)
 
-    # Always validate contracts (breaking migration — no legacy bypass)
+    # ── Contract validation: two paths ──────────────────────────────────
+    #
+    # 1. **Legacy path** (override is None): full fail-closed validation
+    #    via _validate_contracts — requires policy, path, SHA-256, and a
+    #    real manifest file on disk.  Missing/mismatched fields raise.
+    #
+    # 2. **Project-mode path** (override is provided): the caller already
+    #    holds a VerifiedContract[AbiManifest] from the project context.
+    #    External ABI path/hash requirements are bypassed — the override
+    #    carries its own integrity proof.  Only the policy value is checked
+    #    for consistency.
+    #
     yaml_dir = yaml_path.parent if yaml_path is not None else None
-    config.contracts.verified_manifest = _validate_contracts(config.contracts, yaml_dir)
+    if verified_contract_override is None:
+        # ── Legacy: fail-closed ─────────────────────────────────────────
+        config.contracts.verified_manifest = _validate_contracts(config.contracts, yaml_dir)
+    else:
+        # ── Project mode: override bypasses external ABI path/hash ──────
+        if config.contracts.transformation_policy != "preserve_abi":
+            raise ValueError(
+                "Project mode (--project-root) requires "
+                "contracts.transformation_policy=preserve_abi in the YAML config. "
+                "Add the following to your re-agent.yaml:\n"
+                "  contracts:\n"
+                "    transformation_policy: preserve_abi\n"
+                "    abi_manifest_path: ...\n"
+                "    abi_manifest_sha256: ..."
+            )
+        config.contracts.verified_manifest = verified_contract_override
 
     return config
 
@@ -329,6 +380,8 @@ def _validate_known_keys(data: dict[str, Any], known: frozenset[str], section: s
 def load_config(
     yaml_path: Path | None = None,
     cli_overrides: dict[str, Any] | None = None,
+    *,
+    verified_contract_override: VerifiedContract[AbiManifest] | None = None,
 ) -> ReAgentConfig:
     """Load, validate, and return a ``ReAgentConfig``.
 
@@ -376,4 +429,4 @@ def load_config(
     raw = _apply_env_overrides(raw)
     if cli_overrides:
         raw = _apply_cli_overrides(raw, cli_overrides)
-    return _build_config(raw, yaml_path)
+    return _build_config(raw, yaml_path, verified_contract_override=verified_contract_override)
