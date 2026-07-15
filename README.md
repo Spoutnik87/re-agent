@@ -95,6 +95,7 @@ re-agent build
 | `re-agent build` | Run full build pipeline (analyze → transform → assemble) |
 | `re-agent build --phase analyze` | Run only the analyze phase |
 | `re-agent build --phase transform` | Run only the transform phase |
+| `re-agent build --phase transform --address 0xADDRESS` | Transform a single function bound to its ABI manifest entry (preserve_abi mode) |
 | `re-agent build --phase assemble` | Run only the assemble phase |
 | `re-agent build --phase transform --module MyModule` | Transform a specific module |
 | `re-agent build --phase transform --module MyModule --subunit 5` | Start at subunit index 5 |
@@ -134,6 +135,22 @@ Shared across ALL subunits within a single `re-agent build` invocation:
 | `max_compile_retry_calls_per_run` | 3 | Max compile retry calls across all functions |
 
 Token budget is enforced as a **stop-between-calls** cap: the delta from `get_usage()` before/after each call is subtracted. GCC compile retries are additionally bounded by retryable category (only `syntax_error`, `undeclared_identifier`, `type_mismatch`, `goto_error` qualify) and stagnation detection (identical SHA-256 stderr blocks further retries).
+
+### Preserve-ABI Transform
+
+`re-agent build --phase transform --address 0xADDRESS` operates in preserve_abi mode. It binds one transformed artifact to a specific ABI manifest entry: its address and exact output path are validated, while the declared signature and calling convention are supplied to the LLM prompt. A successful compilation produces the composite verdict **MANIFEST_BOUND/COMPILE_PASS**.
+
+**This verdict is not an ABI proof** — it confirms only that (1) the function address was matched to a manifest entry, and (2) the generated code compiles. It is not a behavioral proof: the compiled output is never executed, compared against the original binary's disassembly, or checked for semantic equivalence. No runtime, ASM comparison, or symbol-level verification is performed.
+
+**Current refusals in preserve_abi mode:** the following invocations are rejected with exit code 2 and a diagnostic message before any LLM call or disk operation:
+
+| Invocation | Refused | Reason |
+|------------|---------|--------|
+| `re-agent build` (no `--phase`) | Yes | Bulk all-phase run cannot satisfy per-address manifest binding |
+| `re-agent build --phase analyze` | No | Analysis remains available; it does not transform or publish ABI-bound code |
+| `re-agent build --phase assemble` | Yes | Expects a full module tree, incompatible with single-function binding |
+| `re-agent build --phase transform` (no `--address`) | Yes | Bulk transform processes multiple subunits, not a single entry |
+| `re-agent build --phase transform --address 0xADDRESS` | No | Single-function manifest-bound transform — the only accepted form |
 
 ### Breaking Changes from v1.x
 
@@ -227,7 +244,7 @@ The checker no longer maintains conversation state between rounds. Each verifica
 
 ## Requirements
 
-- Python 3.10+
+- [Python 3.11+](https://www.python.org/downloads/)
 - [ghidra-ai-bridge](https://github.com/Dryxio/ghidra-ai-bridge) — re-agent uses this as its backend to decompile functions, fetch xrefs, read structs/enums, and query Ghidra. Install it and point it at your Ghidra project before running `re-agent reverse`.
 - One supported LLM setup:
   - `ANTHROPIC_API_KEY` for Claude

@@ -17,6 +17,7 @@ from re_agent.contracts.manifest import (
     save_manifest,
 )
 from re_agent.contracts.model import AbiManifest, Architecture, CallingConvention, Symbol
+from re_agent.contracts.runtime import VerifiedAbiManifest, VerifiedContract, VerifiedManifest
 
 __all__ = [
     "AbiManifest",
@@ -29,4 +30,7 @@ __all__ = [
     "load_verified_manifest",
     "manifest_from_symbols",
     "save_manifest",
+    "VerifiedContract",
+    "VerifiedManifest",
+    "VerifiedAbiManifest",
 ]
