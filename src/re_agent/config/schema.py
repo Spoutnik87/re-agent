@@ -259,8 +259,15 @@ class ContractsConfig:
     This is a *breaking migration*: all config files **must** include a
     ``contracts`` section.  There is no legacy fallback.
 
-    Both ``abi_manifest_path`` and ``abi_manifest_sha256`` must be non-empty
-    strings pointing to a valid ABI manifest and its SHA-256 digest.
+    ``abi_manifest_path`` and ``abi_manifest_sha256`` are **optional** at the
+    schema level — they may be empty when the caller provides a
+    ``verified_contract_override`` (project mode).  The strict
+    non-empty/enforcement logic lives in ``_validate_contracts`` inside
+    ``loader.py``, which is **only invoked in the legacy (non-override)
+    path**.  This is by design: project-mode callers supply a
+    pre-validated ``VerifiedContract[AbiManifest]`` that already satisfies
+    all ABI integrity guarantees, so the external path/hash fields are
+    irrelevant.
 
     Validation is fail-fast during config loading — a missing manifest path,
     an empty hash, or an unrecognised policy value raises ``ValueError``.
@@ -283,15 +290,13 @@ class ContractsConfig:
                 f"contracts.transformation_policy={self.transformation_policy!r} is not supported. "
                 f"Valid values: {' | '.join(sorted(str(v) for v in valid_policies))}"
             )
-        if not self.abi_manifest_path.strip():
-            raise ValueError(
-                "contracts.abi_manifest_path must be a non-empty path when contracts.transformation_policy is set."
-            )
-        if not self.abi_manifest_sha256.strip():
-            raise ValueError(
-                "contracts.abi_manifest_sha256 must be a non-empty SHA-256 digest "
-                "when contracts.transformation_policy is set."
-            )
+        # NOTE: abi_manifest_path and abi_manifest_sha256 are NOT validated
+        # here.  Empty values are allowed so project-mode callers can supply
+        # the verified contract via verified_contract_override without needing
+        # external path/hash fields in the YAML config.
+        # The strict non-empty + SHA-256 validation lives in
+        # loader._validate_contracts() which is called only in the legacy
+        # (no-override) path — keeping legacy fail-closed.
 
 
 @dataclass

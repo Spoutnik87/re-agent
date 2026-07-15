@@ -13,9 +13,12 @@ __pycache__/
 # Exclude local dev artifacts — not suitable for PRs
 .opencode/
 cr-agent-report.json
+cr-agent-state.json
 pipeline-state.json
 docs/plans/
 docs/superpowers/
+.slim/deepwork/
+openspec/
 .venv/
 .mypy_cache/
 .pytest_cache/

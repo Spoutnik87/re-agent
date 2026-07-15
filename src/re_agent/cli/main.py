@@ -20,6 +20,30 @@ def build_parser() -> argparse.ArgumentParser:
     init_p.add_argument("--abi-manifest", required=True, help="Path to a valid ABI manifest JSON file (required)")
     init_p.add_argument("--profile", default=None, help=argparse.SUPPRESS)
 
+    project_p = sub.add_parser("project", help="Provision and export generic project snapshots")
+    project_sub = project_p.add_subparsers(dest="project_command", required=True)
+    provision_p = project_sub.add_parser("provision", help="Create an owned project snapshot")
+    provision_p.add_argument("--binary")
+    provision_p.add_argument("--analysis")
+    provision_p.add_argument("--output")
+    provision_p.add_argument("--name")
+    export_p = project_sub.add_parser("export", help="Export a validated analysis snapshot")
+    export_p.add_argument("--backend", choices=["offline-export", "ghidra"], required=True)
+    export_p.add_argument("--analysis")
+    export_p.add_argument("--binary")
+    export_p.add_argument("--output", required=True)
+    export_p.add_argument("--command", nargs=argparse.REMAINDER)
+    export_p.add_argument("--timeout", type=int, default=300)
+
+    toolchain_p = sub.add_parser("toolchain", help="Manage generic toolchain profiles")
+    toolchain_sub = toolchain_p.add_subparsers(dest="toolchain_command", required=True)
+    toolchain_sub.add_parser("schema", help="Print the strict profile JSON schema")
+    activate_p = toolchain_sub.add_parser("activate", help="Activate an immutable profile")
+    activate_p.add_argument("--project-root")
+    activate_p.add_argument("--profile")
+    status_p = toolchain_sub.add_parser("status", help="Show the active profile")
+    status_p.add_argument("--project-root")
+
     # reverse
     rev_p = sub.add_parser("reverse", help="Reverse engineer functions (Phase 1)")
     rev_p.add_argument("--address", help="Single function address to reverse")
@@ -42,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-subunits", type=int, default=None, help="Process at most this many subunits in transform"
     )
     build_p.add_argument("--run-id", default=None, help="Run identifier for diagnostics/evidence paths")
+    build_p.add_argument("--project-root", default=None, help="Owned generic project root (project mode)")
+    build_p.add_argument("--profile", default=None, help="Transient generic toolchain profile (project mode only)")
     build_p.add_argument(
         "--no-persist",
         action="store_true",
@@ -87,6 +113,16 @@ def main(argv: list[str] | None = None) -> int:
         from re_agent.cli.cmd_init import cmd_init
 
         return cmd_init(args)
+
+    if args.command == "project":
+        from re_agent.cli.cmd_project import cmd_project
+
+        return cmd_project(args)
+
+    if args.command == "toolchain":
+        from re_agent.cli.cmd_toolchain import cmd_toolchain
+
+        return cmd_toolchain(args)
 
     if args.command == "reverse":
         from re_agent.cli.cmd_reverse import cmd_reverse
