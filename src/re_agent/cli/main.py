@@ -57,7 +57,10 @@ def build_parser() -> argparse.ArgumentParser:
     # build
     build_p = sub.add_parser("build", help="Reconstruct project from flat .cpp files (Phase 2)")
     build_p.add_argument(
-        "--phase", choices=["analyze", "transform", "assemble"], default=None, help="Run a single build phase"
+        "--phase",
+        choices=["analyze", "transform", "assemble", "link", "package", "verify-recipe"],
+        default=None,
+        help="Run a single build phase (project mode also accepts link/package/verify-recipe)",
     )
     build_p.add_argument("--address", default=None, help="Single function address for ABI-preserving transform")
     build_p.add_argument("--module", default=None, help="Restrict transform to a single module name")
@@ -68,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
     build_p.add_argument("--run-id", default=None, help="Run identifier for diagnostics/evidence paths")
     build_p.add_argument("--project-root", default=None, help="Owned generic project root (project mode)")
     build_p.add_argument("--profile", default=None, help="Transient generic toolchain profile (project mode only)")
+    build_p.add_argument(
+        "--verify-recipe", action="store_true", help="Validate the project build recipe without running it"
+    )
+    build_p.add_argument(
+        "--allow-partial", action="store_true", help="Deprecated; project builds never publish partial results"
+    )
     build_p.add_argument(
         "--no-persist",
         action="store_true",
