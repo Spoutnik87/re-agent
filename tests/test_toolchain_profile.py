@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
+import stat
 from pathlib import Path
 
 import pytest
@@ -14,31 +16,52 @@ from re_agent.toolchain.profile import ProfileError, load_profile, load_profile_
 # ── helpers ───────────────────────────────────────────────────────────────
 
 
-def make_profile_yaml(path: Path, *, extra: str = "") -> None:
+def _create_fake_compiler(directory: Path) -> Path:
+    """Create a minimal executable script to serve as a fake compiler binary.
+
+    Uses a platform-appropriate script (``.bat`` on Windows, shell script
+    elsewhere) and sets the executable bit on POSIX.  The caller owns the
+    temporary directory so cleanup is automatic.
+    """
+    if platform.system() == "Windows":
+        exe = directory / "fake_cc.bat"
+        exe.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
+    else:
+        exe = directory / "fake_cc.sh"
+        exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    resolved = exe.resolve()
+    assert resolved.is_file(), f"fake compiler not created at {resolved}"
+    return resolved
+
+
+def make_profile_yaml(path: Path, *, compiler_path: Path | None = None, extra: str = "") -> None:
     """Write a minimal valid profile YAML."""
-    compiler_path = str(Path(__file__).resolve())
+    if compiler_path is None:
+        compiler_path = _create_fake_compiler(path.parent)
     path.write_text(
         "backend: offline-export\n"
         "target: arbitrary\n"
         "compiler:\n"
-        f"  command: [{json.dumps(compiler_path)}]\n"
+        f"  command: [{json.dumps(str(compiler_path))}]\n"
         f"  flags: ['-c']\n"
         f"{extra}",
         encoding="utf-8",
     )
 
 
-def make_profile_with_linker_yaml(path: Path) -> None:
+def make_profile_with_linker_yaml(path: Path, *, compiler_path: Path | None = None) -> None:
     """Write a profile with both compiler and linker."""
-    compiler_path = str(Path(__file__).resolve())
+    if compiler_path is None:
+        compiler_path = _create_fake_compiler(path.parent)
     path.write_text(
         "backend: offline-export\n"
         "target: arbitrary\n"
         "compiler:\n"
-        f"  command: [{json.dumps(compiler_path)}]\n"
+        f"  command: [{json.dumps(str(compiler_path))}]\n"
         f"  flags: ['-c']\n"
         "linker:\n"
-        f"  command: [{json.dumps(compiler_path)}]\n"
+        f"  command: [{json.dumps(str(compiler_path))}]\n"
         "  args: ['-o', 'out']\n",
         encoding="utf-8",
     )
@@ -50,18 +73,30 @@ def _profile_hash(path: Path) -> str:
     return p.sha256
 
 
+# ── fixtures ──────────────────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def fake_compiler(tmp_path: Path) -> Path:
+    """Fixture: a minimal executable script usable as a fake compiler binary.
+
+    Cross-platform: ``.bat`` on Windows, shell script with +x on POSIX.
+    """
+    return _create_fake_compiler(tmp_path)
+
+
 # ── profile.py additions ──────────────────────────────────────────────────
 
 
 class TestLoadProfileFromDict:
-    def test_valid_dict_matches_yaml(self, tmp_path: Path) -> None:
+    def test_valid_dict_matches_yaml(self, tmp_path: Path, fake_compiler: Path) -> None:
         path = tmp_path / "p.yaml"
-        make_profile_yaml(path)
+        make_profile_yaml(path, compiler_path=fake_compiler)
         from_yaml = load_profile(path)
         raw = {
             "backend": "offline-export",
             "target": "arbitrary",
-            "compiler": {"command": [str(Path(__file__).resolve())], "flags": ["-c"]},
+            "compiler": {"command": [str(fake_compiler)], "flags": ["-c"]},
             "extensions": {},
         }
         from_dict = load_profile_from_dict(raw)
@@ -108,9 +143,9 @@ class TestVerifyCommand:
 
 
 class TestActivateProfile:
-    def test_publishes_profile_and_creates_active_link(self, tmp_path: Path) -> None:
+    def test_publishes_profile_and_creates_active_link(self, tmp_path: Path, fake_compiler: Path) -> None:
         profile = tmp_path / "toolchain.yaml"
-        make_profile_yaml(profile)
+        make_profile_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
         pointer = activate_profile(project_root=project, profile_path=profile)
 
@@ -121,20 +156,20 @@ class TestActivateProfile:
         link_data = json.loads((project / "toolchain" / "active.link").read_text(encoding="utf-8"))
         assert link_data["profile_sha256"] == pointer["profile_sha256"]
 
-    def test_uses_unique_staging(self, tmp_path: Path) -> None:
+    def test_uses_unique_staging(self, tmp_path: Path, fake_compiler: Path) -> None:
         """No .staging_* directories should remain after activation."""
         profile = tmp_path / "toolchain.yaml"
-        make_profile_yaml(profile)
+        make_profile_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
         activate_profile(project_root=project, profile_path=profile)
 
         staging_dirs = [d for d in (project / "toolchain").iterdir() if d.name.startswith(".staging_")]
         assert len(staging_dirs) == 0
 
-    def test_content_addressed_skip_on_repeat(self, tmp_path: Path) -> None:
+    def test_content_addressed_skip_on_repeat(self, tmp_path: Path, fake_compiler: Path) -> None:
         """Re-activating with the same profile should not create a second hash dir."""
         profile = tmp_path / "toolchain.yaml"
-        make_profile_yaml(profile)
+        make_profile_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
         activate_profile(project_root=project, profile_path=profile)
         activate_profile(project_root=project, profile_path=profile)
@@ -145,11 +180,11 @@ class TestActivateProfile:
         items = {d.name for d in (project / "toolchain").iterdir()}
         assert "active.link" in items
 
-    def test_two_different_profiles_create_two_hash_dirs(self, tmp_path: Path) -> None:
+    def test_two_different_profiles_create_two_hash_dirs(self, tmp_path: Path, fake_compiler: Path) -> None:
         p1 = tmp_path / "p1.yaml"
         p2 = tmp_path / "p2.yaml"
-        make_profile_yaml(p1)
-        make_profile_yaml(p2, extra="extensions:\n  variant: two\n")
+        make_profile_yaml(p1, compiler_path=fake_compiler)
+        make_profile_yaml(p2, compiler_path=fake_compiler, extra="extensions:\n  variant: two\n")
         project = tmp_path / "project"
         activate_profile(project_root=project, profile_path=p1)
         activate_profile(project_root=project, profile_path=p2)
@@ -165,19 +200,19 @@ class TestActivateProfile:
 
 
 class TestResolveCapabilityActive:
-    def test_resolves_compile_from_active_link(self, tmp_path: Path) -> None:
+    def test_resolves_compile_from_active_link(self, tmp_path: Path, fake_compiler: Path) -> None:
         profile = tmp_path / "toolchain.yaml"
-        make_profile_yaml(profile)
+        make_profile_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
         activate_profile(project_root=project, profile_path=profile)
 
         resolved = resolve_capability(project_root=project, capability="compile")
         assert len(resolved) == 1
-        assert resolved[0].argv[0] == str(Path(__file__).resolve())
+        assert resolved[0].argv[0] == str(fake_compiler)
 
-    def test_detects_tampered_profile_json(self, tmp_path: Path) -> None:
+    def test_detects_tampered_profile_json(self, tmp_path: Path, fake_compiler: Path) -> None:
         profile = tmp_path / "toolchain.yaml"
-        make_profile_yaml(profile)
+        make_profile_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
         activate_profile(project_root=project, profile_path=profile)
 
@@ -190,9 +225,9 @@ class TestResolveCapabilityActive:
         with pytest.raises(ProfileError, match="hash mismatch"):
             resolve_capability(project_root=project, capability="compile")
 
-    def test_detects_tampered_fingerprint_json(self, tmp_path: Path) -> None:
+    def test_detects_tampered_fingerprint_json(self, tmp_path: Path, fake_compiler: Path) -> None:
         profile = tmp_path / "toolchain.yaml"
-        make_profile_yaml(profile)
+        make_profile_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
         activate_profile(project_root=project, profile_path=profile)
 
@@ -203,9 +238,9 @@ class TestResolveCapabilityActive:
         with pytest.raises(ProfileError, match="fingerprint.json hash mismatch"):
             resolve_capability(project_root=project, capability="compile")
 
-    def test_detects_tampered_active_link(self, tmp_path: Path) -> None:
+    def test_detects_tampered_active_link(self, tmp_path: Path, fake_compiler: Path) -> None:
         profile = tmp_path / "toolchain.yaml"
-        make_profile_yaml(profile)
+        make_profile_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
         activate_profile(project_root=project, profile_path=profile)
 
@@ -224,10 +259,10 @@ class TestResolveCapabilityActive:
         with pytest.raises(ProfileError, match="no toolchain activation"):
             resolve_capability(project_root=project, capability="compile")
 
-    def test_detects_fingerprint_wrong_profile_reference(self, tmp_path: Path) -> None:
+    def test_detects_fingerprint_wrong_profile_reference(self, tmp_path: Path, fake_compiler: Path) -> None:
         """Fingerprint's profile_sha256 must match the stored profile."""
         profile = tmp_path / "toolchain.yaml"
-        make_profile_yaml(profile)
+        make_profile_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
         activate_profile(project_root=project, profile_path=profile)
 
@@ -250,27 +285,27 @@ class TestResolveCapabilityActive:
 
 
 class TestResolveCapabilityTransient:
-    def test_resolves_compile_without_active_link(self, tmp_path: Path) -> None:
+    def test_resolves_compile_without_active_link(self, tmp_path: Path, fake_compiler: Path) -> None:
         profile = tmp_path / "toolchain.yaml"
-        make_profile_yaml(profile)
+        make_profile_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
         # No activate — test directly passes profile_path
         resolved = resolve_capability(project_root=project, capability="compile", profile_path=profile)
         assert len(resolved) == 1
-        assert resolved[0].argv[0] == str(Path(__file__).resolve())
+        assert resolved[0].argv[0] == str(fake_compiler)
 
-    def test_resolves_link_with_required_only(self, tmp_path: Path) -> None:
+    def test_resolves_link_with_required_only(self, tmp_path: Path, fake_compiler: Path) -> None:
         """Transient resolution with linker-capable profile should not fail on compiler if only linker is needed."""
         profile = tmp_path / "toolchain.yaml"
-        make_profile_with_linker_yaml(profile)
+        make_profile_with_linker_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
         resolved = resolve_capability(project_root=project, capability="link", profile_path=profile)
         assert len(resolved) == 1
         assert "-o" in resolved[0].argv
 
-    def test_leaves_no_temp_files(self, tmp_path: Path) -> None:
+    def test_leaves_no_temp_files(self, tmp_path: Path, fake_compiler: Path) -> None:
         profile = tmp_path / "toolchain.yaml"
-        make_profile_yaml(profile)
+        make_profile_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
 
         resolve_capability(project_root=project, capability="compile", profile_path=profile)
@@ -278,18 +313,18 @@ class TestResolveCapabilityTransient:
         temp_yamls = list(project.rglob(".profile.yaml"))
         assert len(temp_yamls) == 0
 
-    def test_unknown_capability(self, tmp_path: Path) -> None:
+    def test_unknown_capability(self, tmp_path: Path, fake_compiler: Path) -> None:
         profile = tmp_path / "toolchain.yaml"
-        make_profile_yaml(profile)
+        make_profile_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
 
         with pytest.raises(ProfileError, match="unknown capability"):
             resolve_capability(project_root=project, capability="fly_to_moon", profile_path=profile)
 
-    def test_missing_command_on_required(self, tmp_path: Path) -> None:
+    def test_missing_command_on_required(self, tmp_path: Path, fake_compiler: Path) -> None:
         """A profile with only a compiler should fail if we request link."""
         profile = tmp_path / "toolchain.yaml"
-        make_profile_yaml(profile)
+        make_profile_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
 
         with pytest.raises(ProfileError, match="toolchain capability unavailable"):
@@ -312,9 +347,9 @@ class TestResolveCapabilityTransient:
 class TestActivateThenResolve:
     """End-to-end: activate, resolve, tamper, verify failure, re-activate, resolve."""
 
-    def test_rollback_reattivation(self, tmp_path: Path) -> None:
+    def test_rollback_reattivation(self, tmp_path: Path, fake_compiler: Path) -> None:
         profile = tmp_path / "toolchain.yaml"
-        make_profile_yaml(profile)
+        make_profile_yaml(profile, compiler_path=fake_compiler)
         project = tmp_path / "project"
 
         pointer1 = activate_profile(project_root=project, profile_path=profile)
@@ -334,12 +369,12 @@ class TestActivateThenResolve:
         with pytest.raises(ProfileError, match="tampered"):
             activate_profile(project_root=project, profile_path=profile)
 
-    def test_rollback_different_profile(self, tmp_path: Path) -> None:
+    def test_rollback_different_profile(self, tmp_path: Path, fake_compiler: Path) -> None:
         """Activate, tamper, activate a different profile, activate original — works."""
         p1 = tmp_path / "p1.yaml"
         p2 = tmp_path / "p2.yaml"
-        make_profile_yaml(p1)
-        make_profile_yaml(p2, extra="extensions:\n  v: 2\n")
+        make_profile_yaml(p1, compiler_path=fake_compiler)
+        make_profile_yaml(p2, compiler_path=fake_compiler, extra="extensions:\n  v: 2\n")
         project = tmp_path / "project"
 
         activate_profile(project_root=project, profile_path=p1)
@@ -349,4 +384,4 @@ class TestActivateThenResolve:
         activate_profile(project_root=project, profile_path=p1)
 
         resolved = resolve_capability(project_root=project, capability="compile")
-        assert resolved[0].argv[0] == str(Path(__file__).resolve())
+        assert resolved[0].argv[0] == str(fake_compiler)

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from re_agent.project.context import load_verified_project
 from re_agent.project.model import ProjectIdentity
+from re_agent.project.publish import DestinationExistsError, publish_directory
 from re_agent.project.snapshot import canonical_json, inventory_snapshot, manifest_document, sha256_bytes, sha256_file
 
 
@@ -68,13 +69,9 @@ def provision_project(*, binary: Path, analysis: Path, output: Path, name: str) 
             raise ProvisionError("staged snapshot verification failed")
         (snapshot / "snapshot.sha256").write_bytes(manifest)
         (stage / "project.id").write_bytes(canonical_json({"format_version": 1, **asdict(identity)}))
-        # Atomic replace: if *output* was created concurrently by another
-        # process, fail instead of clobbering.  On Windows, os.replace fails
-        # with FileExistsError when the target exists and is a directory.
-        # We catch that and raise a clear ProvisionError.
         try:
-            stage.replace(output)
-        except FileExistsError:
+            publish_directory(stage, output)
+        except DestinationExistsError:
             raise ProvisionError(f"destination already exists (concurrent creation): {output}") from None
     except Exception:
         shutil.rmtree(stage, ignore_errors=True)

@@ -51,11 +51,21 @@ def load_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _is_reparse_point(path: Path) -> bool:
+    """Return ``True`` if *path* is a Windows reparse point (junction, mount point, etc.).
+
+    Returns ``False`` on non-Windows platforms where reparse points do not exist.
+    """
+    if os.name != "nt":
+        return False
+    return bool(getattr(path.lstat(), "st_file_attributes", 0) & 0x400)
+
+
 def _safe_relative(root: Path, item: Path) -> PurePosixPath:
     relative = item.relative_to(root)
     if item.is_symlink() or item.is_dir() and item.is_symlink():
         raise SnapshotError(f"links are not allowed: {item}")
-    if os.name == "nt" and getattr(item.lstat(), "st_file_attributes", 0) & 0x400:  # reparse point
+    if _is_reparse_point(item):
         raise SnapshotError(f"reparse points are not allowed: {item}")
     return PurePosixPath(relative.as_posix())
 
@@ -102,14 +112,13 @@ def inventory_snapshot(root: Path) -> tuple[AnalysisMetadata, tuple[SnapshotFile
     if not root.is_dir() or root.is_symlink():
         raise SnapshotError("analysis must be a real directory")
     # On Windows, also reject junctions and other reparse points at root.
-    if os.name == "nt" and getattr(root.lstat(), "st_file_attributes", 0) & 0x400:
+    if _is_reparse_point(root):
         raise SnapshotError(f"analysis root is a reparse point: {root}")
     entries: list[SnapshotFile] = []
     folded: set[str] = set()
     for item in sorted(root.rglob("*")):
-        stat = item.lstat()
         if item.is_dir():
-            if item.is_symlink() or (os.name == "nt" and getattr(stat, "st_file_attributes", 0) & 0x400):
+            if item.is_symlink() or _is_reparse_point(item):
                 raise SnapshotError(f"links are not allowed: {item}")
             continue
         if not item.is_file():

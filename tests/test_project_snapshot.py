@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import unittest.mock as mock
 from pathlib import Path, PurePosixPath
 
 import pytest
 
+from re_agent.project import snapshot as _snapshot_mod
 from re_agent.project.model import SnapshotFile
 from re_agent.project.snapshot import (
     SnapshotError,
+    _is_reparse_point,
     _validate_abi_path,
     inventory_snapshot,
 )
@@ -220,7 +220,7 @@ class TestInventorySnapshotAbiPath:
 
 
 class TestInventorySnapshotRootReparsePoint:
-    """Root reparse-point check (uses monkeypatched ``os.lstat``)."""
+    """Root reparse-point check (mocks ``_is_reparse_point``)."""
 
     def test_root_symlink_is_rejected(self, tmp_path: Path) -> None:
         """Symlink root was already rejected — confirm unchanged."""
@@ -235,61 +235,42 @@ class TestInventorySnapshotRootReparsePoint:
         with pytest.raises(SnapshotError, match="real directory"):
             inventory_snapshot(link)
 
-    def test_root_junction_rejected_on_windows(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """On Windows, a root with REPARSE_POINT attribute is rejected.
+    def test_root_junction_rejected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A root with REPARSE_POINT attribute is rejected.
 
-        We mock ``os.lstat`` to return a fake stat with the reparse attribute
-        for the root path only, while delegating to the real ``os.lstat`` for
-        any other path (e.g. children in the ``rglob`` walk).
+        We mock ``_is_reparse_point`` to return ``True`` for the root path
+        and delegate to the real implementation for all other paths.
         """
         root = _make_snapshot(tmp_path / "snap")
+        target_root = root.resolve()
+        real_fn = _snapshot_mod._is_reparse_point
 
-        real_lstat = os.lstat
-        reparse_root = root.resolve()
+        def _selective(p: Path) -> bool:
+            return True if p.resolve() == target_root else real_fn(p)
 
-        def _mock_lstat(path: Path) -> os.stat_result:
-            result = real_lstat(path)
-            if path.resolve() == reparse_root:
-                # Wrap result to add reparse-point attribute.
-                attrs = result.st_file_attributes | 0x400  # FILE_ATTRIBUTE_REPARSE_POINT
-                return mock.MagicMock(
-                    st_mode=result.st_mode,
-                    st_ino=result.st_ino,
-                    st_dev=result.st_dev,
-                    st_nlink=result.st_nlink,
-                    st_uid=result.st_uid,
-                    st_gid=result.st_gid,
-                    st_size=result.st_size,
-                    st_atime=result.st_atime,
-                    st_mtime=result.st_mtime,
-                    st_ctime=result.st_ctime,
-                    st_file_attributes=attrs,
-                    wraps=result,
-                )
-            return result
-
-        monkeypatch.setattr(Path, "lstat", _mock_lstat)
+        monkeypatch.setattr(_snapshot_mod, "_is_reparse_point", _selective)
         with pytest.raises(SnapshotError, match="reparse point"):
             inventory_snapshot(root)
 
-    def test_root_not_reparse_point_passes_on_windows(self, tmp_path: Path) -> None:
-        """On Windows, a normal directory (no reparse) passes the check.
-
-        No mocking needed: ``os.name`` is ``"nt"`` already on this host,
-        and a real directory does not have ``FILE_ATTRIBUTE_REPARSE_POINT`` set.
-        """
+    def test_root_not_reparse_point_passes(self, tmp_path: Path) -> None:
+        """A normal directory (no reparse) passes the check on any platform."""
         root = _make_snapshot(tmp_path / "snap")
-        assert os.name == "nt"
         metadata, files = inventory_snapshot(root)
         assert metadata.abi_manifest_path == PurePosixPath("abi.json")
         assert len(files) == _SNAPSHOT_FILE_COUNT
 
-    def test_root_reparse_check_skipped_on_posix(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """On POSIX, the reparse-point check is skipped entirely."""
-        root = _make_snapshot(tmp_path / "snap")
-        monkeypatch.setattr(os, "name", "posix")
-        metadata, files = inventory_snapshot(root)
-        assert len(files) == _SNAPSHOT_FILE_COUNT
+
+# ── _is_reparse_point helper ──────────────────────────────────────
+
+
+class TestIsReparsePoint:
+    """Direct unit tests for the portable reparse-point helper."""
+
+    def test_returns_false_on_current_platform(self, tmp_path: Path) -> None:
+        """On any platform, a regular directory is never classified as a reparse point."""
+        d = tmp_path / "plain_dir"
+        d.mkdir()
+        assert _is_reparse_point(d) is False
 
 
 # ── child reparse-point rejection ─────────────────────────────────────────
@@ -310,39 +291,22 @@ class TestInventorySnapshotChildReparsePoints:
         with pytest.raises(SnapshotError, match="links are not allowed|reparse points are not allowed"):
             inventory_snapshot(root)
 
-    def test_junction_dir_rejected_on_windows(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_junction_dir_rejected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A directory child with REPARSE_POINT attribute is rejected.
 
-        We mock ``os.lstat`` to return a fake stat with the reparse attribute
-        for the junction directory only.
+        We mock ``_is_reparse_point`` to return ``True`` for the target child
+        directory only.
         """
         root = _make_snapshot(tmp_path / "snap")
         reparse_dir = root / "evil_link_dir"
         reparse_dir.mkdir()
 
-        real_lstat = os.lstat
-        reparse_path = reparse_dir.resolve()
+        target = reparse_dir.resolve()
+        real_fn = _snapshot_mod._is_reparse_point
 
-        def _mock_lstat(path: Path) -> os.stat_result:
-            result = real_lstat(path)
-            if path.resolve() == reparse_path:
-                attrs = result.st_file_attributes | 0x400
-                return mock.MagicMock(
-                    st_mode=result.st_mode,
-                    st_ino=result.st_ino,
-                    st_dev=result.st_dev,
-                    st_nlink=result.st_nlink,
-                    st_uid=result.st_uid,
-                    st_gid=result.st_gid,
-                    st_size=result.st_size,
-                    st_atime=result.st_atime,
-                    st_mtime=result.st_mtime,
-                    st_ctime=result.st_ctime,
-                    st_file_attributes=attrs,
-                    wraps=result,
-                )
-            return result
+        def _selective(p: Path) -> bool:
+            return True if p.resolve() == target else real_fn(p)
 
-        monkeypatch.setattr(Path, "lstat", _mock_lstat)
+        monkeypatch.setattr(_snapshot_mod, "_is_reparse_point", _selective)
         with pytest.raises(SnapshotError, match="links are not allowed|reparse points are not allowed"):
             inventory_snapshot(root)
