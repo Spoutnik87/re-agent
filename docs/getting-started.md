@@ -1,6 +1,6 @@
 # Getting Started
 
-re-agent's release workflow is project-scoped. The old direct build mode is
+re-agent's project workflow is project-scoped. The old direct build mode is
 not supported; all build and promotion commands require an owned project root.
 
 ## Install
@@ -12,7 +12,7 @@ pip install re-agent
 Python 3.11+ is required. Configure an RE backend and an LLM provider for
 reverse operations.
 
-## 1. Create a Release 3 project
+## 1. Create an owned project
 
 Start with a binary and a validated analysis export. Provisioning verifies
 their identity and creates an owned snapshot:
@@ -44,11 +44,11 @@ re-agent toolchain activate --project-root PROJECT_ROOT --profile PROFILE.yaml
 re-agent toolchain status --project-root PROJECT_ROOT
 ```
 
-Builds use the activated profile and authenticate its complete hash chain. For
-a one-shot run, pass `--profile PROFILE.yaml` to `build` or `promote`; this is
-transient and does not alter activation state.
+Builds use the activated profile and authenticate its complete hash chain. If
+no profile is active, pass `--profile PROFILE.yaml` to `build` or `promote` for
+a one-shot transient selection; it does not alter activation state.
 
-## 3. Run Release 4 build
+## 3. Run a controlled candidate build
 
 ```bash
 re-agent build --project-root PROJECT_ROOT --phase transform
@@ -65,7 +65,7 @@ build pointer is updated atomically. Partial output is never published.
 
 Compilation alone is not an ABI proof or a behavioral proof.
 
-## 4. Run Release 5 proofs and promotion
+## 4. Run adapter proofs and promote
 
 The two generic proof stages can be recorded independently:
 
@@ -88,7 +88,7 @@ Inspect the derived state and authenticated active promotion view:
 re-agent promote status --project-root PROJECT_ROOT --format json
 ```
 
-Promotion requires `--project-root`, an active verified Release 4 build, and an
+Promotion requires `--project-root`, an active verified build, and an
 original-binary-equivalent input for differential/project promotion. Evidence
 is written to an external immutable promotion root. Set it explicitly with
 `--promotion-root PATH`, or let the CLI use its isolated sibling default. It
@@ -100,9 +100,9 @@ represented by their recorded adapter protocol and authenticated inputs; they
 do not claim general ABI equivalence, behavioral equivalence, or semantic
 correctness.
 
-## 5. Verify or replay a Release 6 run
+## 5. Verify or replay transform provenance
 
-R6 records immutable per-target `TransformEvidence` during project transform.
+Project transform records immutable per-target `TransformEvidence`.
 BuildEvidence v2 links every checkpoint to its TransformEvidence record.
 Verify or replay an existing run with the project run lock held for the full
 operation:
@@ -131,4 +131,4 @@ re-agent status
 ```
 
 See [configuration.md](configuration.md) for configuration and
-[architecture.md](architecture.md) for the Release 3–6 design.
+[architecture.md](architecture.md) for the project lifecycle design.

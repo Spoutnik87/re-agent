@@ -1,26 +1,27 @@
 # Architecture
 
 re-agent has an independent reverse/parity surface and a project-scoped
-Release 3–6 lifecycle:
+workflow for owned snapshots, controlled builds, adapter-backed promotion,
+and replayable transform provenance:
 
 ```
-R3  binary + analysis → owned snapshot → lifecycle backend
+binary + analysis → owned snapshot → lifecycle backend
                          │
                          └→ activated verified capabilities
 
-R4  project root → deterministic bulk transform → bounded recipe
+project root → deterministic bulk transform → bounded recipe
                          │                         │
                          └── complete evidence ────┘
                                       │
                          immutable build + active pointer
 
-R5  active build → ABI adapter proof → differential adapter proof
+active build → ABI adapter proof → differential adapter proof
                          │                    │
                          └── immutable hash-chained evidence
                                       │
                             authenticated promotion view
 
-R6  immutable TransformEvidence → run lock → verify / exact offline replay
+immutable TransformEvidence → run lock → verify / exact offline replay
 ```
 
 ## Reverse and parity surface
@@ -33,7 +34,7 @@ It supports single-function and class-level reversal, bounded retries, block
 reversal, objective structural checks, and configurable parity signals. These
 commands do not create or promote a project build.
 
-## Release 3 — owned project and toolchain foundation
+## Owned project and toolchain foundation
 
 ### Owned snapshots
 
@@ -61,7 +62,7 @@ resolution. It fingerprints only the requested capabilities and writes no
 activation state. Activated and transient command identities are recorded in
 the evidence that consumes them.
 
-## Release 4 — deterministic project build
+## Deterministic project build
 
 The legacy direct build mode is removed. Build orchestration is project-only:
 `--project-root` is required, and project files—not the caller's CWD—define the
@@ -91,11 +92,11 @@ Compilation and `MANIFEST_BOUND/COMPILE_PASS` evidence establish build gates
 only. They are not ABI proofs, behavioral proofs, runtime proofs, or semantic
 equivalence claims.
 
-## Release 5 — adapter proofs and promotion
+## Adapter proofs and promotion
 
-R5 is a generic adapter boundary. Each adapter receives an authenticated
+The generic adapter boundary receives an authenticated
 request and returns a bounded result plus captured evidence and attachments.
-The promotion service resolves the required proof capabilities from the R3
+The promotion service resolves the required proof capabilities from the
 toolchain chain, stages inputs under the external promotion root, and seals
 the results.
 
@@ -124,7 +125,7 @@ trusting history alone.
 Promotion requires:
 
 - an existing verified project root;
-- an active verified Release 4 build;
+- an active verified build;
 - an external promotion root, outside the project tree; and
 - the original-binary-equivalent input for differential and whole-project
   promotion.
@@ -137,7 +138,7 @@ Proofs make only the claims represented by their adapter protocols and
 authenticated inputs. Neither compilation nor these proofs claim general ABI
 equivalence, behavioral equivalence, or semantic correctness.
 
-## Release 6 — immutable transform evidence and replay
+## Immutable transform evidence and replay
 
 ### Per-target evidence
 
@@ -150,7 +151,7 @@ response, compiler argv and executable hash, generated source hash, and object
 hash. The evidence is addressed by its target path and validated by its content
 hash before use.
 
-Release 4 `BuildEvidence` schema v2 is the project-level envelope. Each target
+`BuildEvidence` schema v2 is the project-level envelope. Each target
 checkpoint carries the relative TransformEvidence path and its hash, so build
 validation can prove that complete project coverage is linked to immutable
 per-target records. Historical schema v1 remains promotion-compatible compilation
@@ -183,6 +184,6 @@ project has an activated profile; pass a transient profile only when no active
 profile exists. A transient profile cannot override activation and does not
 write activation state.
 
-R6 does not establish universal compiler determinism, semantic equivalence, or
+This workflow does not establish universal compiler determinism, semantic equivalence, or
 behavioral correctness. Exact replay authenticates the recorded provider
 inputs/output, compiler identity, and artifact hashes for that run only.

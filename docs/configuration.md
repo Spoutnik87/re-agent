@@ -1,8 +1,8 @@
 # Configuration
 
 re-agent combines ordinary reverse/parity configuration with project-scoped
-Release 3–6 state. CLI flags override environment variables, which override
-`re-agent.yaml`, which overrides defaults.
+snapshot, build, promotion, and replay state. CLI flags override environment
+variables, which override `re-agent.yaml`, which overrides defaults.
 
 ## ABI contracts
 
@@ -54,9 +54,9 @@ re-agent reverse --class NAME
 re-agent parity --filter REGEX
 ```
 
-## Release 3 project configuration
+## Owned project configuration
 
-R3 project roots contain an owned snapshot, `project.id`, and the verified
+Project roots contain an owned snapshot, `project.id`, and the verified
 contract used by project operations. Create and inspect them with:
 
 ```bash
@@ -99,7 +99,7 @@ Build and promotion use the activated profile by default. Passing
 the requested capabilities and writes no activation state. Every resolved
 binary is fingerprinted and its identity is recorded in downstream evidence.
 
-## Release 4 build configuration
+## Controlled candidate build configuration
 
 There is no legacy direct build mode. `build` requires `--project-root`; YAML
 does not create a standalone CWD build. The `build:` section configures the
@@ -139,15 +139,15 @@ re-agent build --project-root PROJECT_ROOT --phase link
 re-agent build --project-root PROJECT_ROOT --phase package
 ```
 
-R4 transforms the complete manifest deterministically, validates compile
+The project transform processes the complete manifest deterministically, validates compile
 checkpoints, and then runs only bounded, path-safe external recipes. Evidence
 binds snapshot, manifest, config, recipe, compiler, and linker identities.
 Build publication is immutable and updates an authenticated active pointer;
 failed or partial runs cannot publish.
 
-## Release 5 promotion configuration and commands
+## Adapter-backed promotion configuration and commands
 
-R5 has no YAML promotion override. Promotion is explicitly scoped by CLI:
+Promotion has no YAML override. It is explicitly scoped by CLI:
 
 ```bash
 re-agent promote prove --project-root PROJECT_ROOT --proof abi --all
@@ -169,19 +169,19 @@ adapter-proof stages. `promote project` runs both stages for the complete
 project and publishes only after every bundle and chain check succeeds.
 
 Promotion requires the original-binary-equivalent input for differential and
-whole-project promotion, an active verified Release 4 build, and a verified
+whole-project promotion, an active verified build, and a verified
 project root. There are no reset, demote, force, or partial-promotion options.
 Compilation and proof records do not claim general ABI equivalence, behavioral
 equivalence, or semantic correctness.
 
-## Release 6 run verification and replay
+## Replayable transform provenance
 
 Transform writes one immutable, canonical, target-path-addressed and
 content-hashed `TransformEvidence` record per
 manifest entry. The record contains the project and snapshot identities,
 manifest identities, effective LLM configuration, exact request/messages and
 response, compiler command and executable hash, generated source hash, and
-object hash. Release 4 `BuildEvidence` schema v2 links each checkpoint to its
+object hash. `BuildEvidence` schema v2 links each checkpoint to its
 TransformEvidence path and digest.
 
 Each project run is protected by an OS-backed `build/runs/RUN_ID/.run.lock`.
@@ -205,6 +205,6 @@ profile; pass a transient `--profile PATH` only when no active profile exists.
 Transient selection cannot override activation and writes no activation state.
 
 BuildEvidence v1 remains promotion-compatible historical compilation evidence,
-but is not replayable because it lacks per-target TransformEvidence linkage. R6 does not
+but is not replayable because it lacks per-target TransformEvidence linkage. This workflow does not
 claim universal compiler determinism or semantic proof; replay validates only
 the recorded inputs, provider output, toolchain identity, and artifact hashes.
