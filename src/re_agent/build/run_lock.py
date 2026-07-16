@@ -108,23 +108,37 @@ class RunLock:
     def _lock_file(file: Any) -> None:
         if os.name == "nt":
             assert msvcrt is not None
-            msvcrt.locking(file.fileno(), msvcrt.LK_NBLCK, 1)
+            locking = getattr(msvcrt, "locking", None)
+            nonblocking_lock = getattr(msvcrt, "LK_NBLCK", None)
+            if not callable(locking) or nonblocking_lock is None:
+                raise RunLockError("Windows locking support is unavailable")
+            locking(file.fileno(), nonblocking_lock, 1)
         else:
             assert fcntl is not None
-            fcntl.flock(  # type: ignore[attr-defined]
-                file.fileno(),
-                fcntl.LOCK_EX | fcntl.LOCK_NB,  # type: ignore[attr-defined]
-            )
+            flock = getattr(fcntl, "flock", None)
+            exclusive = getattr(fcntl, "LOCK_EX", None)
+            nonblocking = getattr(fcntl, "LOCK_NB", None)
+            if not callable(flock) or exclusive is None or nonblocking is None:
+                raise RunLockError("POSIX locking support is unavailable")
+            flock(file.fileno(), exclusive | nonblocking)
 
     @staticmethod
     def _unlock_file(file: Any) -> None:
         if os.name == "nt":
             assert msvcrt is not None
             file.seek(0)
-            msvcrt.locking(file.fileno(), msvcrt.LK_UNLCK, 1)
+            locking = getattr(msvcrt, "locking", None)
+            unlock = getattr(msvcrt, "LK_UNLCK", None)
+            if not callable(locking) or unlock is None:
+                raise RunLockError("Windows locking support is unavailable")
+            locking(file.fileno(), unlock, 1)
         else:
             assert fcntl is not None
-            fcntl.flock(file.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
+            flock = getattr(fcntl, "flock", None)
+            unlock = getattr(fcntl, "LOCK_UN", None)
+            if not callable(flock) or unlock is None:
+                raise RunLockError("POSIX locking support is unavailable")
+            flock(file.fileno(), unlock)
 
     def _write_metadata(self, file: Any) -> None:
         diagnostic = {
