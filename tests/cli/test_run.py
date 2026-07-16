@@ -285,9 +285,10 @@ def test_build_linked_build_parent_fails_without_escaped_writes(project) -> None
     except OSError:
         pytest.skip("directory symlinks unavailable")
 
+    before = set(outside.rglob("*"))
     common = ["--config", str(project.config_path), "build", "--project-root", str(project.root)]
     assert main([*common, "--phase", "transform", "--run-id", "linked-build"]) == 2
-    assert not any(outside.rglob("*"))
+    assert set(outside.rglob("*")) == before
 
 
 def test_replay_linked_parent_fails_without_escaped_writes(project) -> None:
@@ -300,8 +301,9 @@ def test_replay_linked_parent_fails_without_escaped_writes(project) -> None:
     except OSError:
         pytest.skip("directory symlinks unavailable")
 
+    before = set(outside.rglob("*"))
     assert _run(project, "replay") == 2
-    assert not any(outside.rglob("*"))
+    assert set(outside.rglob("*")) == before
     assert replay_parent.is_symlink()
 
 
