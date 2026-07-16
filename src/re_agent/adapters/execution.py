@@ -45,7 +45,10 @@ def _kill_tree(process: subprocess.Popen[bytes]) -> None:
             )
     else:
         with suppress(OSError, ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)  # type: ignore[attr-defined]
+            kill_process_group = getattr(os, "killpg", None)
+            sigkill = getattr(signal, "SIGKILL", None)
+            if callable(kill_process_group) and sigkill is not None:
+                kill_process_group(process.pid, sigkill)
         with suppress(OSError):
             process.kill()
 
