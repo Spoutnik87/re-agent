@@ -1,142 +1,133 @@
 # re-agent
 
-Autonomous reverse-engineering agent with a project build surface for
-reconstructing C++ source trees. It combines a reverser/checker loop, Ghidra
-integration, parity checks, and verified project transformation.
+Generic reverse-engineering and project-release tooling. Reverse and parity
+remain independent capabilities; Releases 3–5 add a verified project,
+deterministic build, and promotion lifecycle.
 
-## Overview
+## Release architecture
 
 ```
-re-agent reverse
-    │
-    ├── Config and project profile
-    ├── Reverser → checker → bounded fix loop
-    ├── Objective verifier and parity engine
-    └── RE backend
+R3  project provision/export → owned immutable snapshot
+    lifecycle backend → activated, verified toolchain capabilities
 
-project root
-    └── transform → link/package → evidence → atomic publication
+R4  project transform → bounded recipe → evidence → immutable build + active pointer
+
+R5  adapter proof (ABI → differential) → hash-chained evidence → promotion view
 ```
 
-Reverse and parity remain usable independently of project build publication.
+### Release 3 — project foundation
 
-## CLI reference
-
-| Command | Description |
-|---------|-------------|
-| `re-agent init --abi-manifest PATH` | Generate a config file |
-| `re-agent reverse --class NAME` | Reverse functions in a class |
-| `re-agent reverse --dry-run` | Show what would be reversed |
-| `re-agent parity --filter REGEX` | Run parity checks |
-| `re-agent status` | Show reversal progress |
-| `re-agent pipeline --skip-build` | Run reverse only |
-| `re-agent build --project-root PATH --phase transform` | Transform a complete project |
-| `re-agent build --project-root PATH --phase link` | Link verified staged output |
-| `re-agent build --project-root PATH --phase package` | Package verified output |
-| `re-agent build --project-root PATH --phase verify-recipe` | Verify the recipe without publication |
-
-## Project build
-
-The legacy direct build mode is removed. Build commands require
-`--project-root`; direct config/CWD execution is no longer a build interface.
-The project root owns the input snapshot, contract, recipe, intermediate state,
-toolchain identity, evidence, and publication area.
-
-The supported phases are `transform`, `link`, `package`, and `verify-recipe`.
-There is no project analysis phase. Project mode rejects legacy per-function,
-partial-work, and partial-publication selectors.
+R3 owns the project snapshot. Provisioning verifies the original binary and
+analysis inventory, copies the analysis into an immutable project-owned
+snapshot, and records `project.id` plus a project fingerprint. Lifecycle
+backends can provision or export snapshots through the generic offline-export
+or Ghidra backends.
 
 ```bash
-re-agent build --project-root PATH_TO_PROJECT --phase transform
-re-agent build --project-root PATH_TO_PROJECT --phase verify-recipe
-re-agent build --project-root PATH_TO_PROJECT --phase link
-re-agent build --project-root PATH_TO_PROJECT --phase package
+re-agent project provision --binary PATH --analysis PATH --output PROJECT_ROOT --name NAME
+re-agent project export --backend offline-export --analysis PATH --binary PATH --output PATH
+re-agent project export --backend ghidra --analysis PATH --binary PATH --output PATH
 ```
 
-Toolchains are resolved from the project's activated profile by default. Pass
-`--profile PATH` for a transient, one-shot profile; transient resolution writes
-no activation state. Both modes fingerprint the required binaries and record
-their identities in evidence.
+R3 toolchain capabilities are also project-scoped. Activate a profile once,
+then inspect its authenticated status:
 
-Transform and publication are persistent and fail closed. Evidence must cover
-the complete project and pass identity, recipe, and toolchain checks before
-publication. Publication is atomic and all-or-nothing; failed or incomplete
-runs never replace the active build.
+```bash
+re-agent toolchain activate --project-root PROJECT_ROOT --profile PROFILE.yaml
+re-agent toolchain status --project-root PROJECT_ROOT
+```
 
-## Configuration
+Build and promotion commands use the activated, hash-verified capability chain
+by default. A supplied profile is transient and is never activated or written
+into project state.
+
+### Release 4 — deterministic project build
+
+R4 removes legacy direct build mode. `build` requires `--project-root` and
+performs deterministic bulk transformation against the owned snapshot. Every
+manifest entry must have complete compile evidence before an external recipe
+may run. Recipes are bounded, path-checked, and executed only in project-owned
+staging.
+
+```bash
+re-agent build --project-root PROJECT_ROOT --phase transform
+re-agent build --project-root PROJECT_ROOT --phase verify-recipe
+re-agent build --project-root PROJECT_ROOT --phase link
+re-agent build --project-root PROJECT_ROOT --phase package
+```
+
+R4 evidence binds the project, manifest, configuration, recipe, compiler, and
+linker identities. Successful output is published as an immutable build and
+the authenticated active pointer is updated without replacing an existing
+publication. Failures are all-or-nothing: partial, stale, or incomplete
+results are never published. Compilation alone is not an ABI or behavioral
+proof.
+
+### Release 5 — generic adapter proofs and promotion
+
+R5 adds a generic two-stage adapter proof flow. The ABI stage establishes the
+adapter's ABI-facing result; the differential stage compares the candidate
+against an original-binary-equivalent input. Each stage emits content-addressed
+evidence. Evidence is stored immutably and linked by an append-only hash chain.
+
+Run individual proofs, inspect promotion state, or atomically promote the
+whole project:
+
+```bash
+re-agent promote prove --project-root PROJECT_ROOT --proof abi --all
+re-agent promote prove --project-root PROJECT_ROOT --proof differential --all \
+  --original-binary ORIGINAL_BINARY
+re-agent promote status --project-root PROJECT_ROOT --format json
+re-agent promote project --project-root PROJECT_ROOT \
+  --original-binary ORIGINAL_BINARY
+```
+
+Promotion requires a verified project root, an existing active Release 4
+build, the original-binary-equivalent input for differential/project promotion,
+and an external promotion root. Use `--promotion-root PATH` to select it; by
+default the CLI uses an isolated sibling of the project root. The promotion
+root must be outside the project tree. `--profile PATH` may select a transient
+verified toolchain for proofs.
+
+Promotion is monotonic and fail-closed. There are no reset, demote, force, or
+partial-promotion operations. Proof or publication failure leaves the active
+promotion view unchanged.
+
+These results are not claims of ABI equivalence, behavioral equivalence, or
+semantic correctness. Compilation proves only compilation; adapter proofs
+prove only the explicitly recorded protocol evidence and its authenticated
+inputs.
+
+## Reverse and parity commands
+
+```bash
+re-agent init --abi-manifest PATH
+re-agent reverse --class NAME --max-functions 10
+re-agent parity --filter REGEX
+re-agent status
+re-agent pipeline --skip-build
+```
+
+The reverse pipeline provides bounded reverser/checker loops, block reversal,
+structural checks, objective verification, and configurable parity signals.
+
+## Configuration and installation
 
 Configuration priority is CLI flags > `RE_AGENT_*` environment variables >
-`re-agent.yaml` > defaults. The `contracts` section is required by operational
-commands that load a config. See [docs/configuration.md](docs/configuration.md).
-
-```yaml
-contracts:
-  transformation_policy: "preserve_abi"
-  abi_manifest_path: "abi_manifest.json"
-  abi_manifest_sha256: "<64-character SHA-256>"
-```
-
-Project build defaults live under `build:`, but are consumed in the context of
-an explicit verified project root. They do not create a standalone CWD build.
-
-## Quick start
-
-```bash
-# Initialize configuration
-re-agent init --abi-manifest PATH_TO_ABI_MANIFEST
-
-# Reverse and inspect independently
-re-agent reverse --class NAME --max-functions 10
-re-agent parity --limit 50
-re-agent status
-
-# Build from an owned project root
-re-agent build --project-root PATH_TO_PROJECT --phase transform
-re-agent build --project-root PATH_TO_PROJECT --phase package
-```
-
-## Reverse pipeline features
-
-- Few-shot retrieval of structurally similar successful reversals.
-- Pre-classification for leaf, getter/setter, vtable-heavy, Win32, and complex
-  state-machine functions.
-- Block-level reversal for large functions with targeted fixes.
-- Structural call/control-flow comparison before checker acceptance.
-- Stagnation detection and bounded retries.
-- Objective verification and configurable parity signals.
-- Claude, OpenAI-compatible, and Codex providers with retry/backoff.
-
-## Parity engine
-
-The parity engine uses configurable heuristic signals including missing source,
-stub markers, trivial bodies, call-count differences, floating-point
-sensitivity, NaN handling, and inline wrappers. It is a conservative review
-gate, not full semantic equivalence checking.
-
-## Safety
-
-- No auto-commit or auto-push.
-- Reverse and parity commands do not publish project builds.
-- Project builds use owned staging, verified evidence, and atomic publication.
-- Activated toolchains are authenticated through their hash chain; transient
-  profiles are never persisted.
-
-## Requirements and installation
-
-- Python 3.11+
-- A configured ghidra-ai-bridge backend for reversal.
-- One supported LLM setup: Anthropic, OpenAI-compatible, or Codex CLI.
+`re-agent.yaml` > defaults. See [docs/configuration.md](docs/configuration.md)
+for reverse, project, toolchain, build, and promotion configuration.
 
 ```bash
 pip install re-agent
 ```
 
+Requirements include Python 3.11+, a configured RE backend, and a supported
+LLM provider. The project core is generic and contains no target-specific
+rules.
+
 ## Development
 
 ```bash
-git clone https://github.com/Spoutnik87/re-agent.git
-cd re-agent
-python -m venv .venv
 python -m pip install -e ".[dev]"
 pytest tests/
 ruff check src/

@@ -1,123 +1,136 @@
 # Architecture
 
-re-agent has two related surfaces: reverse engineering and project build.
+re-agent has an independent reverse/parity surface and a project-scoped
+Release 3–5 lifecycle:
 
 ```
-CLI → Config → Orchestrator → Agent Loop → LLM Providers
-                   │                │
-                   ▼                ▼
-             Function Picker   RE Backend
-                   │
-                   ▼
-              Parity Engine
+R3  binary + analysis → owned snapshot → lifecycle backend
+                         │
+                         └→ activated verified capabilities
 
-Project root → transform → link/package
-                    │
-                    ▼
-              evidence → atomic publication
+R4  project root → deterministic bulk transform → bounded recipe
+                         │                         │
+                         └── complete evidence ────┘
+                                      │
+                         immutable build + active pointer
+
+R5  active build → ABI adapter proof → differential adapter proof
+                         │                    │
+                         └── immutable hash-chained evidence
+                                      │
+                            authenticated promotion view
 ```
 
-## Reverse pipeline
+## Reverse and parity surface
 
-The reverse pipeline is independent of project build publication:
+The reverse pipeline remains independent of build publication:
 
-CLI → Config → Orchestrator → Agent Loop → LLM Providers + RE Backend
+`CLI → config → orchestrator → reverser/checker loop → RE backend → parity`
 
-### Layers
+It supports single-function and class-level reversal, bounded retries, block
+reversal, objective structural checks, and configurable parity signals. These
+commands do not create or promote a project build.
 
-- **CLI**: `init`, `reverse`, `parity`, `status`, and pipeline entry points.
-- **Config**: YAML, environment, and CLI overlays, project profiles, and ABI
-  contracts.
-- **Orchestrator**: single-function or class-level reversal.
-- **Agents**: reverser and checker with a bounded fix loop.
-- **LLM**: protocol-based Claude, Codex, and OpenAI-compatible providers.
-- **Backend**: RE-tool abstraction with capability flags.
-- **Parity**: configurable heuristic verification and scoring.
-- **Reports**: JSON/Markdown output and session tracking.
+## Release 3 — owned project and toolchain foundation
 
-## Project build architecture
+### Owned snapshots
 
-The legacy direct build mode is removed. Project builds require an explicit
-`--project-root`; all inputs, intermediate state, toolchain identity, evidence,
-and publication metadata are owned by that root rather than the process CWD.
+`project provision` validates the original binary, inventories the analysis,
+copies it into a project-owned snapshot, and writes a `project.id`. The project
+fingerprint is derived from the original-binary hash and snapshot inventory
+hash. Snapshot paths and metadata are verified whenever a project command
+opens the root.
 
-The project build surface is intentionally limited:
+`project export` supplies lifecycle backends for generic analysis snapshots.
+The current backend choices are `offline-export` and `ghidra`. Backends produce
+validated exports; provisioning remains the no-replace operation that gives a
+project its owned identity.
 
-1. **Transform** creates a complete staged result and its evidence.
-2. **Link/package** consume verified staged output.
-3. **Verify-recipe** executes a recipe witness without publishing a build.
+### Verified capabilities
 
-There is no project analysis phase. Project mode rejects legacy per-function,
-partial-work, and partial-publication selectors.
+Toolchain profiles are strict, target-neutral descriptions of compiler, linker,
+and optional inspection/proof commands. `toolchain activate` publishes a
+content-addressed profile and fingerprint, then updates the project's active
+link. Capability resolution authenticates the complete pointer → profile →
+fingerprint → binary chain before returning commands.
 
-### Toolchain profiles
+Passing `--profile` to a build or promotion command selects transient
+resolution. It fingerprints only the requested capabilities and writes no
+activation state. Activated and transient command identities are recorded in
+the evidence that consumes them.
 
-Without `--profile`, the project authenticates its activated
-`toolchain/active.link → profile → fingerprint → binaries` chain. With
-`--profile PATH`, it resolves a transient profile for that invocation only;
-the transient path writes no activation state. Required compiler and linker
-binaries are fingerprinted in either mode, and their identities become part
-of the build evidence.
+## Release 4 — deterministic project build
 
-### Evidence and publication
+The legacy direct build mode is removed. Build orchestration is project-only:
+`--project-root` is required, and project files—not the caller's CWD—define the
+inputs and publication area.
 
-Each run stages output under the project build area and records identity for
-the project snapshot, contract, configuration, recipe, and toolchain. Evidence
-is validated as a complete set before publication. Missing, stale, mismatched,
-or failed evidence rejects the run. Publication is atomic and all-or-nothing:
-a failed run cannot replace the active build, and partial results are never
-published.
+The build phases are:
 
-## Prompt architecture
+1. **Transform**: process the complete manifest in deterministic order and
+   create per-entry compile checkpoints.
+2. **Verify-recipe**: execute a bounded witness for the external recipe without
+   publishing a build.
+3. **Link/package**: consume complete transform checkpoints, materialize
+   recipe manifests, run the bounded external recipe, validate declared output,
+   and create build evidence.
 
-Prompts live in two distinct directories:
+The recipe is constrained to project staging, has validated input/output paths,
+and cannot escape the project build area. Evidence binds at least the project
+fingerprint, manifest hashes, configuration, recipe hash, compiler and linker
+fingerprints, complete source/object coverage, output hash, and run identity.
 
-### Reverse prompts
+Publication uses an immutable no-replace destination and an authenticated
+active pointer. A failed recipe, stale checkpoint, incomplete coverage, or
+identity mismatch prevents publication. Existing active output is never
+replaced by a partial or failed run.
 
-Located at `src/re_agent/reverse/agents/prompts/`:
+Compilation and `MANIFEST_BOUND/COMPILE_PASS` evidence establish build gates
+only. They are not ABI proofs, behavioral proofs, runtime proofs, or semantic
+equivalence claims.
 
-| File | Purpose |
-|------|---------|
-| `reverser_system.md` | Main reverser system prompt |
-| `reverser_task.md` | Per-function reversal task |
-| `checker_system.md` | Verification checker system prompt |
-| `checker_task.md` | Verification task |
-| `block_reverser_system.md` | Block-level reversal system prompt |
-| `block_reverser_task.md` | Block decomposition task |
-| `decompose_system.md` | Function decomposition system prompt |
-| `decompose_task.md` | Split guidance |
-| `varmap_system.md` | Variable mapping system prompt |
-| `varmap_task.md` | Variable mapping task |
-| `fix_instructions.md` | Compile-error fix instructions |
+## Release 5 — adapter proofs and promotion
 
-### Project build prompts
+R5 is a generic adapter boundary. Each adapter receives an authenticated
+request and returns a bounded result plus captured evidence and attachments.
+The promotion service resolves the required proof capabilities from the R3
+toolchain chain, stages inputs under the external promotion root, and seals
+the results.
 
-Located at `src/re_agent/build/prompts/`:
+### Two proof stages
 
-| File | Purpose |
-|------|---------|
-| `transform_system.md` | Project transformation system prompt |
-| `transform_task.md` | Project context and transformation task |
-| `repair_system.md` | Compile-error repair mode |
+- **ABI proof** records the adapter's ABI-facing result for the selected
+  candidate/build.
+- **Differential proof** records the adapter comparison using the required
+  original-binary-equivalent input.
 
-## Contracts layer
+Each stage produces content-addressed proof evidence. A sealed proof bundle
+hashes its evidence; the append-only promotion journal hash-chains batches.
+The immutable evidence store and active promotion publisher authenticate the
+bundle, journal, project/build identity, and current promotion view before
+reporting `PROMOTED`.
 
-The contracts layer pins the ABI surface through an external manifest. The
-manifest is validated and pinned at config load time before an operational
-command proceeds.
+`promote project` is the atomic whole-project entry point: it runs both proof
+stages for every manifest entry, commits no journal or pointer until all
+bundles are complete, and publishes one authenticated active view. `promote
+prove` is useful for recording a single stage; `promote status` derives state
+from the current verified project/build and authenticated evidence rather than
+trusting history alone.
 
-### Key properties
+### Promotion boundaries
 
-- **Generic**: the manifest format supports multiple architectures and is not
-  tied to a particular binary.
-- **Versioned**: manifests carry a semantic version.
-- **Self-hashing**: the internal hash covers canonical JSON with itself blanked.
-- **Fail-fast**: missing policy, bad hashes, unknown keys, and unsafe paths fail
-  during loading.
+Promotion requires:
 
-The `contracts` section is mandatory for `reverse`, `parity`, `status`, and
-other commands that load `re-agent.yaml`; `init` is the only command that can
-start without an existing config.
+- an existing verified project root;
+- an active verified Release 4 build;
+- an external promotion root, outside the project tree; and
+- the original-binary-equivalent input for differential and whole-project
+  promotion.
 
-See [configuration.md](configuration.md) for the schema and project build
-configuration.
+The CLI supports `promote prove`, `promote project`, and `promote status`.
+There are no reset, demote, force, or partial-promotion operations. Failed or
+stale evidence leaves the active promotion view unchanged.
+
+Proofs make only the claims represented by their adapter protocols and
+authenticated inputs. Neither compilation nor these proofs claim general ABI
+equivalence, behavioral equivalence, or semantic correctness.
