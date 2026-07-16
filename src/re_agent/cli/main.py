@@ -96,6 +96,33 @@ def build_parser() -> argparse.ArgumentParser:
     stat_p.add_argument("--class", dest="class_name", help="Filter by class (reverse phase only)")
     stat_p.add_argument("--format", choices=["text", "json", "markdown"], default="text")
 
+    promote_p = sub.add_parser("promote", help="Project-scoped Release 5 promotion")
+    promote_sub = promote_p.add_subparsers(dest="promote_command", required=True)
+    prove_p = promote_sub.add_parser("prove", help="Run a promotion proof")
+    prove_p.add_argument("--project-root", required=True)
+    prove_p.add_argument("--proof", choices=["abi", "differential"], required=True)
+    target_group = prove_p.add_mutually_exclusive_group(required=True)
+    target_group.add_argument("--address")
+    target_group.add_argument("--all", action="store_true")
+    prove_p.add_argument("--build-id")
+    prove_p.add_argument("--profile")
+    prove_p.add_argument("--original-binary")
+    prove_p.add_argument("--promotion-root", help="External immutable promotion store")
+
+    promote_status = promote_sub.add_parser("status", help="Show promotion state")
+    promote_status.add_argument("--project-root", required=True)
+    promote_status.add_argument("--address")
+    promote_status.add_argument("--build-id")
+    promote_status.add_argument("--format", choices=["text", "json"], default="text")
+    promote_status.add_argument("--promotion-root", help="External immutable promotion store")
+
+    promote_project = promote_sub.add_parser("project", help="Atomically prove and promote the whole project")
+    promote_project.add_argument("--project-root", required=True)
+    promote_project.add_argument("--build-id")
+    promote_project.add_argument("--profile")
+    promote_project.add_argument("--original-binary", required=True)
+    promote_project.add_argument("--promotion-root", help="External immutable promotion store")
+
     return parser
 
 
@@ -146,6 +173,11 @@ def main(argv: list[str] | None = None) -> int:
         from re_agent.cli.cmd_status import cmd_status
 
         return cmd_status(args)
+
+    if args.command == "promote":
+        from re_agent.cli.cmd_promote import cmd_promote
+
+        return cmd_promote(args)
 
     parser.print_help()
     return 1
