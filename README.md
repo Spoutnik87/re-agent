@@ -1,8 +1,8 @@
 # re-agent
 
 Generic reverse-engineering and project-release tooling. Reverse and parity
-remain independent capabilities; Releases 3–5 add a verified project,
-deterministic build, and promotion lifecycle.
+remain independent capabilities; Releases 3–6 add a verified project,
+deterministic build, promotion, and replayable run lifecycle.
 
 ## Release architecture
 
@@ -13,6 +13,8 @@ R3  project provision/export → owned immutable snapshot
 R4  project transform → bounded recipe → evidence → immutable build + active pointer
 
 R5  adapter proof (ABI → differential) → hash-chained evidence → promotion view
+
+R6  immutable TransformEvidence → locked run verify/replay → exact offline replay
 ```
 
 ### Release 3 — project foundation
@@ -98,6 +100,39 @@ semantic correctness. Compilation proves only compilation; adapter proofs
 prove only the explicitly recorded protocol evidence and its authenticated
 inputs.
 
+### Release 6 — replayable transform runs
+
+R6 writes immutable, target-path-addressed and content-hashed `TransformEvidence`
+for every transformed manifest entry. Each per-target record captures the project/snapshot and
+manifest identities, effective LLM configuration and request, exact input and
+response, compiler invocation and binary hash, generated source hash, and
+object hash. `BuildEvidence` schema v2 links every target checkpoint to its
+TransformEvidence path and hash.
+
+Every project run is protected by an OS-backed `.run.lock`. Verification and
+replay re-read the project, configuration, profile selection, and run state
+under that lock; they reject stale identity, missing, substituted, or changed
+run files.
+
+```bash
+re-agent run verify --project-root PROJECT_ROOT --run-id RUN_ID
+re-agent run replay --project-root PROJECT_ROOT --run-id RUN_ID
+```
+
+Replay is offline-only: it uses the recorded provider messages and response,
+requires exact effective LLM configuration, and does not call a live provider.
+Replay still uses the verified compiler and checks regenerated source/object
+hashes against the recorded TransformEvidence. A transient `--profile PATH`
+may be used only when the project has no active profile; it cannot override an
+active profile. Historical BuildEvidence v1 remains promotion-compatible
+historical compilation evidence, but is not replayable because it has no
+per-target TransformEvidence linkage.
+
+R6 does not claim universal compiler determinism or semantic equivalence.
+Exact replay verifies the recorded inputs, provider output, compiler identity,
+and artifact hashes for this run; it is not a universal compiler or behavioral
+proof.
+
 ## Reverse and parity commands
 
 ```bash
@@ -115,7 +150,7 @@ structural checks, objective verification, and configurable parity signals.
 
 Configuration priority is CLI flags > `RE_AGENT_*` environment variables >
 `re-agent.yaml` > defaults. See [docs/configuration.md](docs/configuration.md)
-for reverse, project, toolchain, build, and promotion configuration.
+for reverse, project, toolchain, build, promotion, and replay configuration.
 
 ```bash
 pip install re-agent

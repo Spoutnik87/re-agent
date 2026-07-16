@@ -1,7 +1,7 @@
 # Configuration
 
 re-agent combines ordinary reverse/parity configuration with project-scoped
-Release 3–5 state. CLI flags override environment variables, which override
+Release 3–6 state. CLI flags override environment variables, which override
 `re-agent.yaml`, which overrides defaults.
 
 ## ABI contracts
@@ -173,3 +173,38 @@ whole-project promotion, an active verified Release 4 build, and a verified
 project root. There are no reset, demote, force, or partial-promotion options.
 Compilation and proof records do not claim general ABI equivalence, behavioral
 equivalence, or semantic correctness.
+
+## Release 6 run verification and replay
+
+Transform writes one immutable, canonical, target-path-addressed and
+content-hashed `TransformEvidence` record per
+manifest entry. The record contains the project and snapshot identities,
+manifest identities, effective LLM configuration, exact request/messages and
+response, compiler command and executable hash, generated source hash, and
+object hash. Release 4 `BuildEvidence` schema v2 links each checkpoint to its
+TransformEvidence path and digest.
+
+Each project run is protected by an OS-backed `build/runs/RUN_ID/.run.lock`.
+`run verify` and `run replay` hold that lock for the complete operation and
+re-read project identity, config, profile selection, run identity, checkpoints,
+and evidence before proceeding.
+
+```bash
+re-agent run verify --project-root PROJECT_ROOT --run-id RUN_ID
+re-agent run replay --project-root PROJECT_ROOT --run-id RUN_ID
+```
+
+Replay is exact and offline-only. It uses the recorded provider transcript and
+response through the replay provider, requires exact effective LLM
+configuration, and never contacts a live provider. It still invokes the
+verified compiler and compares regenerated source/object hashes with the
+recorded TransformEvidence.
+
+Profile selection has one rule: omit `--profile` to use the activated project
+profile; pass a transient `--profile PATH` only when no active profile exists.
+Transient selection cannot override activation and writes no activation state.
+
+BuildEvidence v1 remains promotion-compatible historical compilation evidence,
+but is not replayable because it lacks per-target TransformEvidence linkage. R6 does not
+claim universal compiler determinism or semantic proof; replay validates only
+the recorded inputs, provider output, toolchain identity, and artifact hashes.

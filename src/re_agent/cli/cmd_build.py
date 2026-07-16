@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -21,11 +22,29 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _source_text(path: Path) -> str:
+    """Read source without universal-newline translation."""
+    return path.read_bytes().decode("utf-8")
+
+
 def _config_identity(path: Path) -> str:
     try:
         return _sha256(path)
     except OSError as exc:
         raise ValueError(f"config identity cannot be read: {path}") from exc
+
+
+def _value_identity(value: object) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _effective_llm_config(llm_cfg: Any) -> dict[str, object]:
+    return {
+        key: getattr(llm_cfg, key)
+        for key in ("provider", "model", "block_model", "base_url", "max_tokens", "temperature", "timeout_s")
+        if hasattr(llm_cfg, key)
+    }
 
 
 def _atomic_json(path: Path, value: object) -> None:
@@ -50,10 +69,61 @@ def _atomic_create_json(path: Path, value: object) -> None:
 
 
 def _copy_atomic(source: Path, destination: Path) -> None:
+    _require_regular_contained_file(source, source.parent)
+    _reject_path_components(destination.parent)
+    if destination.is_symlink() or _is_reparse_point(destination):
+        raise ValueError(f"refusing to overwrite linked destination: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
+    _reject_path_components(destination.parent)
+    _require_regular_contained_file(source, source.parent)
     temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
     shutil.copyfile(source, temporary)
+    if destination.is_symlink() or _is_reparse_point(destination):
+        temporary.unlink(missing_ok=True)
+        raise ValueError(f"refusing to overwrite linked destination: {destination}")
     temporary.replace(destination)
+
+
+def _is_reparse_point(path: Path) -> bool:
+    try:
+        attributes = getattr(path.lstat(), "st_file_attributes", 0)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise ValueError(f"cannot inspect path: {path}") from exc
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+
+def _reject_path_components(path: Path) -> None:
+    """Reject symlink/reparse components before any path is followed."""
+    absolute = path.absolute()
+    current = Path(absolute.anchor)
+    for component in absolute.parts[1:]:
+        current /= component
+        if not current.exists() and not current.is_symlink():
+            continue
+        if current.is_symlink() or _is_reparse_point(current):
+            raise ValueError(f"path contains a symlink or reparse point: {current}")
+
+
+def _require_regular_contained_file(path: Path, root: Path) -> Path:
+    """Require a regular, non-linked file resolved beneath ``root``."""
+    root_absolute = root.absolute()
+    path_absolute = path.absolute()
+    _reject_path_components(root_absolute)
+    _reject_path_components(path_absolute)
+    if not path_absolute.is_relative_to(root_absolute):
+        raise ValueError(f"path escapes expected root: {path}")
+    if path_absolute.is_symlink() or _is_reparse_point(path_absolute) or not path_absolute.is_file():
+        raise ValueError(f"path is not a regular file: {path}")
+    try:
+        resolved_root = root_absolute.resolve(strict=True)
+        resolved_path = path_absolute.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"cannot resolve path: {path}") from exc
+    if not resolved_path.is_relative_to(resolved_root):
+        raise ValueError(f"resolved path escapes expected root: {path}")
+    return resolved_path
 
 
 def _project_recipe(project_root: Path, profile_raw: str | None, staging: Path) -> tuple[Any, Any]:
@@ -100,6 +170,15 @@ def _project_recipe(project_root: Path, profile_raw: str | None, staging: Path) 
     return recipe, link_command
 
 
+def _reject_ambiguous_profile(project_root: Path, profile_raw: str | None) -> None:
+    """Reject transient profile selection when the project has an active one."""
+    if profile_raw is None:
+        return
+    active_link = project_root / "toolchain" / "active.link"
+    if active_link.is_file() or active_link.is_symlink():
+        raise ValueError("--profile cannot be combined with an active toolchain profile")
+
+
 def _materialize_recipe(recipe: Any, replacements: dict[str, str]) -> Any:
     """Expand only documented, relative recipe placeholders."""
     from re_agent.build.recipe import BuildRecipe
@@ -136,6 +215,23 @@ def _recipe_replacements(staging: Path, recipe: Any, output_path: str) -> dict[s
         "artifact": _recipe_path(cwd, staging / "artifact"),
         "staging_root": _recipe_path(cwd, staging),
     }
+
+
+def _source_for_symbol(build_cfg: Any, symbol: Any) -> Path:
+    source_dir = Path(build_cfg.input.decompiled_dir)
+    _reject_path_components(source_dir)
+    candidates = [
+        candidate
+        for candidate in source_dir.iterdir()
+        if candidate.is_file()
+        and not candidate.is_symlink()
+        and candidate.name.lower().startswith(f"0x{symbol.address:x}")
+        and candidate.suffix == ".cpp"
+    ]
+    if len(candidates) != 1:
+        raise ValueError(f"expected exactly one source candidate for 0x{symbol.address:x}")
+    _require_regular_contained_file(candidates[0], source_dir)
+    return candidates[0]
 
 
 def _write_recipe_manifests(staging: Path, checkpoints: list[Any], recipe: Any) -> dict[str, str]:
@@ -206,28 +302,87 @@ def _write_witness_inputs(staging: Path, recipe: Any, compiler: Any) -> dict[str
     }
 
 
-def _target_checkpoint_valid(checkpoint: Any, symbol: Any, staging: Path) -> bool:
-    """Validate checkpoint identity and rehash both staged artifacts on resume."""
+def _target_checkpoint_valid(
+    checkpoint: Any,
+    symbol: Any,
+    staging: Path,
+    *,
+    input_source: Path,
+    manifest: Any,
+    verified_contract: Any,
+    project_fingerprint: str,
+    snapshot_fingerprint: str,
+    run_id: str,
+    llm_config: dict[str, object],
+    compile_command: Any,
+) -> bool:
+    """Validate the checkpoint and its complete, replayable transform evidence."""
     try:
         source = staging / symbol.output_path
         object_path = staging / Path(symbol.output_path).with_suffix(".o")
+        evidence_path = staging / checkpoint.transform_evidence_path
+        if not checkpoint.transform_evidence_path or not checkpoint.transform_evidence_sha256:
+            return False
+        path_parts = checkpoint.transform_evidence_path.split("/")
+        if (
+            "\\" in checkpoint.transform_evidence_path
+            or checkpoint.transform_evidence_path.startswith("/")
+            or any(part in {"", ".", ".."} for part in path_parts)
+            or not evidence_path.is_relative_to(staging)
+            or not evidence_path.is_file()
+        ):
+            return False
+        _require_regular_contained_file(source, staging)
+        _require_regular_contained_file(object_path, staging)
+        _require_regular_contained_file(evidence_path, staging)
+        _require_regular_contained_file(input_source, input_source.parent)
+        from re_agent.build.evidence import load_transform_evidence
+        from re_agent.build.transform.manifest_bound_transform import build_preserve_abi_prompt
+        from re_agent.llm.replay import validate_replay_effective_config
+
+        transform = load_transform_evidence(evidence_path)
+        if _sha256(evidence_path) != checkpoint.transform_evidence_sha256:
+            return False
+        prompt = build_preserve_abi_prompt(symbol, _source_text(input_source), manifest)
+        if transform.messages != (("system", prompt.system), ("user", prompt.user)):
+            return False
+        validate_replay_effective_config(llm_config, transform.llm_config)
+        compiler_argv = transform.compiler_argv
+        if (
+            not compiler_argv
+            or tuple(compiler_argv[: len(compile_command.argv)]) != tuple(compile_command.argv)
+            or transform.compiler_executable_sha256 != compile_command.executable_sha256
+        ):
+            return False
         return (
             checkpoint.key() == (symbol.address, symbol.name)
             and checkpoint.status == "compiled"
             and checkpoint.signature == symbol.signature
             and checkpoint.calling_convention == symbol.calling_convention.value
             and checkpoint.output_path == symbol.output_path
+            and checkpoint.transform_evidence_path == checkpoint.transform_evidence_path.replace("\\", "/")
             and "MANIFEST_BOUND" in checkpoint.verdicts
             and "COMPILE_PASS" in checkpoint.verdicts
-            and source.is_file()
-            and object_path.is_file()
+            and transform.project_fingerprint == project_fingerprint
+            and transform.snapshot_fingerprint == snapshot_fingerprint
+            and transform.manifest_raw_sha256 == verified_contract.raw_sha256
+            and transform.manifest_sha256 == verified_contract.canonical_sha256
+            and transform.run_id == run_id
+            and transform.target_address == symbol.address
+            and transform.target_name == symbol.name
+            and transform.target_signature == symbol.signature
+            and transform.target_calling_convention == symbol.calling_convention.value
+            and transform.target_output_path == symbol.output_path
+            and transform.input_sha256 == _sha256(input_source)
             and checkpoint.source_sha256 == _sha256(source)
             and checkpoint.generated_sha256 == _sha256(source)
             and checkpoint.output_sha256 == _sha256(source)
-            and checkpoint.input_sha256 == _sha256(source)
+            and checkpoint.input_sha256 == _sha256(input_source)
             and checkpoint.object_sha256 == _sha256(object_path)
+            and transform.generated_sha256 == _sha256(source)
+            and transform.object_sha256 == _sha256(object_path)
         )
-    except (AttributeError, OSError, ValueError):
+    except (AttributeError, OSError, UnicodeDecodeError, ValueError):
         return False
 
 
@@ -249,7 +404,14 @@ def _write_failure_evidence(
     )
 
 
-def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: Any) -> int:
+def _cmd_build_project_unlocked(
+    args: argparse.Namespace,
+    project_context: Any,
+    config: Any,
+    *,
+    run_id: str,
+    run_root: Path,
+) -> int:
     """Release 4 project orchestration: bulk transform, recipe, evidence, publish."""
     from re_agent.build.bulk import validate_bulk_evidence
     from re_agent.build.evidence import BuildEvidence, TargetCheckpoint, save_evidence
@@ -269,12 +431,8 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
     if phase not in {"transform", "assemble", "link", "package"}:
         print("Error: project mode accepts transform, link, package, or verify-recipe", file=sys.stderr)
         return 2
+    _reject_ambiguous_profile(root, getattr(args, "profile", None))
 
-    run_id = getattr(args, "run_id", None) or f"run-{uuid.uuid4().hex}"
-    if not run_id.replace("-", "").replace("_", "").replace(".", "").isalnum():
-        print("Error: --run-id must be a safe path component", file=sys.stderr)
-        return 2
-    run_root = root / "build" / "runs" / run_id
     staging = run_root / "staging"
     try:
         run_root.mkdir(parents=True, exist_ok=True)
@@ -316,6 +474,10 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
             capability="compile",
             profile_path=Path(args.profile) if getattr(args, "profile", None) else None,
         )
+        effective_llm_config = _effective_llm_config(config.llm)
+        from re_agent.build.transform.manifest_bound_transform import build_preserve_abi_prompt
+
+        prompt_identity = build_preserve_abi_prompt(first_symbol, "identity-source", manifest).system
         identities = {
             "project_fingerprint": project_context.identity.project_fingerprint,
             "snapshot_manifest_sha256": project_context.identity.snapshot_manifest_sha256,
@@ -326,13 +488,15 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
             "config_sha256": _config_identity(Path(args.config)),
             "recipe_template_sha256": recipe_template_sha256,
             "recipe_sha256": recipe.recipe_sha256,
+            "llm_config_sha256": _value_identity(effective_llm_config),
+            "prompt_sha256": hashlib.sha256(prompt_identity.encode("utf-8")).hexdigest(),
         }
         build_cfg.input.ghidra_exports = str(project_context.snapshot_root)
         if not Path(build_cfg.output.target_dir).is_absolute():
             build_cfg.output.target_dir = str(root / build_cfg.output.target_dir)
         checkpoint_file = run_root / "checkpoints.json"
         identity_file = run_root / "run.json"
-        identity_payload = {"schema_version": 1, "run_id": run_id, **identities}
+        identity_payload = {"schema_version": 2, "run_id": run_id, **identities}
         if identity_file.exists():
             stored = json.loads(identity_file.read_text(encoding="utf-8"))
             if stored != identity_payload:
@@ -356,7 +520,20 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
         if phase == "transform":
             for index, symbol in enumerate(sorted(manifest.symbols, key=lambda item: (item.address, item.name))):
                 prior = existing.get((symbol.address, symbol.name))
-                if prior is not None and _target_checkpoint_valid(prior, symbol, staging):
+                input_source = _source_for_symbol(build_cfg, symbol)
+                if prior is not None and _target_checkpoint_valid(
+                    prior,
+                    symbol,
+                    staging,
+                    input_source=input_source,
+                    manifest=manifest,
+                    verified_contract=config.contracts.verified_manifest,
+                    project_fingerprint=project_context.identity.project_fingerprint,
+                    snapshot_fingerprint=project_context.identity.snapshot_manifest_sha256,
+                    run_id=f"{run_id}-{index}",
+                    llm_config=effective_llm_config,
+                    compile_command=compile_command,
+                ):
                     checkpoints.append(prior)
                     continue
                 stale_unit = (
@@ -366,7 +543,7 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
                     / f"0x{symbol.address:x}"
                 )
                 if stale_unit.exists() or stale_unit.is_symlink():
-                    shutil.rmtree(stale_unit, ignore_errors=True)
+                    raise ValueError(f"prior transform publication for 0x{symbol.address:x} is not reusable")
                 result = run_manifest_bound_transform(
                     build_cfg,
                     config.llm,
@@ -375,6 +552,8 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
                     run_id=f"{run_id}-{index}",
                     persist=True,
                     verified_compile_command=compile_command,
+                    project_fingerprint=project_context.identity.project_fingerprint,
+                    snapshot_fingerprint=project_context.identity.snapshot_manifest_sha256,
                 )
                 if not result.successful:
                     raise ValueError(f"transform failed for 0x{symbol.address:x}: {getattr(result, 'error', '')}")
@@ -384,14 +563,31 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
                     / f"{run_id}-{index}"
                     / f"0x{symbol.address:x}"
                 )
+                target_root = Path(build_cfg.output.target_dir).absolute()
+                _reject_path_components(target_root)
+                _reject_path_components(unit)
+                if not unit.absolute().is_relative_to(target_root):
+                    raise ValueError(f"transform unit escapes target root for 0x{symbol.address:x}")
                 source = unit / symbol.output_path
                 obj = unit / (Path(symbol.output_path).stem + ".o")
-                if not source.is_file() or not obj.is_file():
+                transform_evidence = unit / "transform-evidence.json"
+                try:
+                    _require_regular_contained_file(source, unit)
+                    _require_regular_contained_file(obj, unit)
+                    _require_regular_contained_file(transform_evidence, unit)
+                except ValueError as exc:
+                    raise ValueError(f"transform evidence missing or unsafe for 0x{symbol.address:x}") from exc
+                if not source.is_file() or not obj.is_file() or not transform_evidence.is_file():
                     raise ValueError(f"transform evidence missing for 0x{symbol.address:x}")
                 target_source = staging / symbol.output_path
                 target_object = staging / Path(symbol.output_path).with_suffix(".o")
+                target_evidence = staging / "transform-evidence" / f"0x{symbol.address:x}.json"
                 _copy_atomic(source, target_source)
                 _copy_atomic(obj, target_object)
+                _copy_atomic(transform_evidence, target_evidence)
+                from re_agent.build.evidence import load_transform_evidence
+
+                load_transform_evidence(target_evidence)
                 checkpoints.append(
                     TargetCheckpoint(
                         address=symbol.address,
@@ -402,10 +598,12 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
                         signature=symbol.signature,
                         calling_convention=symbol.calling_convention.value,
                         output_path=symbol.output_path,
-                        input_sha256=_sha256(target_source),
+                        input_sha256=_sha256(input_source),
                         generated_sha256=_sha256(target_source),
                         object_sha256=_sha256(target_object),
                         verdicts=("MANIFEST_BOUND", "COMPILE_PASS"),
+                        transform_evidence_path=target_evidence.relative_to(staging).as_posix(),
+                        transform_evidence_sha256=_sha256(target_evidence),
                     )
                 )
                 _atomic_json(
@@ -423,7 +621,20 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
         for symbol, checkpoint in zip(
             sorted(manifest.symbols, key=lambda item: (item.address, item.name)), checkpoints, strict=True
         ):
-            if not _target_checkpoint_valid(checkpoint, symbol, staging):
+            index = expected.index((symbol.address, symbol.name))
+            if not _target_checkpoint_valid(
+                checkpoint,
+                symbol,
+                staging,
+                input_source=_source_for_symbol(build_cfg, symbol),
+                manifest=manifest,
+                verified_contract=config.contracts.verified_manifest,
+                project_fingerprint=project_context.identity.project_fingerprint,
+                snapshot_fingerprint=project_context.identity.snapshot_manifest_sha256,
+                run_id=f"{run_id}-{index}",
+                llm_config=effective_llm_config,
+                compile_command=compile_command,
+            ):
                 raise ValueError(f"stale or incomplete checkpoint for 0x{symbol.address:x}")
         _write_recipe_manifests(staging, checkpoints, recipe)
         if phase == "transform":
@@ -461,7 +672,20 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
         for symbol, checkpoint in zip(
             sorted(manifest.symbols, key=lambda item: (item.address, item.name)), checkpoints, strict=True
         ):
-            if not _target_checkpoint_valid(checkpoint, symbol, staging):
+            index = expected.index((symbol.address, symbol.name))
+            if not _target_checkpoint_valid(
+                checkpoint,
+                symbol,
+                staging,
+                input_source=_source_for_symbol(build_cfg, symbol),
+                manifest=manifest,
+                verified_contract=config.contracts.verified_manifest,
+                project_fingerprint=project_context.identity.project_fingerprint,
+                snapshot_fingerprint=project_context.identity.snapshot_manifest_sha256,
+                run_id=f"{run_id}-{index}",
+                llm_config=effective_llm_config,
+                compile_command=compile_command,
+            ):
                 raise ValueError(f"recipe mutated staged input for 0x{symbol.address:x}")
         _, produced = recipe.validate_paths(staging)
         artifact = staging / "artifact"
@@ -475,6 +699,7 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
             output_path="artifact",
             output_sha256=_sha256(artifact),
             toolchain_sha256=link_command.executable_sha256,
+            schema_version=2,
             run_id=run_id,
             source_coverage=expected,
             object_coverage=expected,
@@ -504,6 +729,29 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
         publication = publish_build(staging, root / "build", run_id)
         print(f"Build published: {publication.publication_id}")
         return 0
+    except Exception as exc:
+        print(f"Project build rejected: {exc}", file=sys.stderr)
+        return 2
+
+
+def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: Any) -> int:
+    """Run project orchestration while holding the OS-backed run lock."""
+    from re_agent.build.run_lock import RunLock
+
+    run_id = getattr(args, "run_id", None) or f"run-{uuid.uuid4().hex}"
+    if not run_id.replace("-", "").replace("_", "").replace(".", "").isalnum():
+        print("Error: --run-id must be a safe path component", file=sys.stderr)
+        return 2
+    run_root = project_context.root / "build" / "runs" / run_id
+    try:
+        with RunLock(run_root, metadata={"run_id": run_id}):
+            return _cmd_build_project_unlocked(
+                args,
+                project_context,
+                config,
+                run_id=run_id,
+                run_root=run_root,
+            )
     except Exception as exc:
         print(f"Project build rejected: {exc}", file=sys.stderr)
         return 2

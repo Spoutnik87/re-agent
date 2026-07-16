@@ -100,6 +100,27 @@ represented by their recorded adapter protocol and authenticated inputs; they
 do not claim general ABI equivalence, behavioral equivalence, or semantic
 correctness.
 
+## 5. Verify or replay a Release 6 run
+
+R6 records immutable per-target `TransformEvidence` during project transform.
+BuildEvidence v2 links every checkpoint to its TransformEvidence record.
+Verify or replay an existing run with the project run lock held for the full
+operation:
+
+```bash
+re-agent run verify --project-root PROJECT_ROOT --run-id RUN_ID
+re-agent run replay --project-root PROJECT_ROOT --run-id RUN_ID
+```
+
+Replay is exact and offline-only: recorded messages, response, effective LLM
+configuration, compiler identity, and artifact hashes must match. It never
+contacts a live provider. `--profile PROFILE.yaml` is allowed only when no
+active project profile exists; it is transient and cannot override activation.
+BuildEvidence v1 remains promotion-compatible historical compilation evidence,
+but cannot be replayed because it lacks TransformEvidence linkage.
+
+These checks do not establish universal compiler determinism or semantic proof.
+
 ## Reverse and parity remain independent
 
 ```bash
@@ -110,4 +131,4 @@ re-agent status
 ```
 
 See [configuration.md](configuration.md) for configuration and
-[architecture.md](architecture.md) for the Release 3–5 design.
+[architecture.md](architecture.md) for the Release 3–6 design.

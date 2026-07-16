@@ -1,7 +1,7 @@
 # Architecture
 
 re-agent has an independent reverse/parity surface and a project-scoped
-Release 3–5 lifecycle:
+Release 3–6 lifecycle:
 
 ```
 R3  binary + analysis → owned snapshot → lifecycle backend
@@ -19,6 +19,8 @@ R5  active build → ABI adapter proof → differential adapter proof
                          └── immutable hash-chained evidence
                                       │
                             authenticated promotion view
+
+R6  immutable TransformEvidence → run lock → verify / exact offline replay
 ```
 
 ## Reverse and parity surface
@@ -134,3 +136,53 @@ stale evidence leaves the active promotion view unchanged.
 Proofs make only the claims represented by their adapter protocols and
 authenticated inputs. Neither compilation nor these proofs claim general ABI
 equivalence, behavioral equivalence, or semantic correctness.
+
+## Release 6 — immutable transform evidence and replay
+
+### Per-target evidence
+
+Transform produces one canonical, no-replace, target-path-addressed and
+content-hashed `TransformEvidence` record for each successfully transformed
+manifest entry. It binds the project fingerprint,
+snapshot fingerprint, raw and canonical manifest hashes, run ID, target
+identity, effective LLM configuration, request/messages, exact input and raw
+response, compiler argv and executable hash, generated source hash, and object
+hash. The evidence is addressed by its target path and validated by its content
+hash before use.
+
+Release 4 `BuildEvidence` schema v2 is the project-level envelope. Each target
+checkpoint carries the relative TransformEvidence path and its hash, so build
+validation can prove that complete project coverage is linked to immutable
+per-target records. Historical schema v1 remains promotion-compatible compilation
+evidence, but is not replayable because it has no such linkage.
+
+### Run locking and verification
+
+Each project run has an OS-backed `build/runs/RUN_ID/.run.lock`. Build,
+verification, and replay operations hold the lock while re-reading the verified
+project, configuration, selected profile, run identity, checkpoints, and
+evidence. A changed, substituted, missing, or stale input rejects the operation.
+
+The CLI exposes:
+
+```bash
+re-agent run verify --project-root PROJECT_ROOT --run-id RUN_ID
+re-agent run replay --project-root PROJECT_ROOT --run-id RUN_ID
+```
+
+`verify` checks the complete recorded run. `replay` regenerates transforms in
+an isolated replay directory using the recorded provider transcript and exact
+effective LLM configuration. It is offline-only and never contacts a live
+provider; regenerated source and object hashes must equal the recorded
+TransformEvidence hashes.
+
+### Profile rule and limits
+
+Profile selection is deliberately unambiguous: omit `--profile` when the
+project has an activated profile; pass a transient profile only when no active
+profile exists. A transient profile cannot override activation and does not
+write activation state.
+
+R6 does not establish universal compiler determinism, semantic equivalence, or
+behavioral correctness. Exact replay authenticates the recorded provider
+inputs/output, compiler identity, and artifact hashes for that run only.

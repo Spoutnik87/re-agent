@@ -4,13 +4,121 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any, cast
+from urllib.parse import urlsplit
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_EFFECTIVE_CONFIG_KEYS = {
+    "provider",
+    "model",
+    "block_model",
+    "base_url",
+    "max_tokens",
+    "temperature",
+    "timeout_s",
+}
+
+
+def _hash_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _freeze(value: object) -> object:
+    if isinstance(value, Mapping):
+        return tuple(sorted(((str(k), _freeze(v)) for k, v in value.items()), key=lambda item: item[0]))
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    if isinstance(value, set):
+        return tuple(sorted((_freeze(item) for item in value), key=repr))
+    return value
+
+
+def _json_safe(value: object) -> bool:
+    if value is None or isinstance(value, (str, bool, int)):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, (list, tuple)):
+        return all(_json_safe(item) for item in value)
+    if isinstance(value, Mapping):
+        return all(isinstance(key, str) and _json_safe(item) for key, item in value.items())
+    return False
+
+
+def _safe_relative_posix(path: str) -> bool:
+    if not isinstance(path, str) or not path or "\\" in path or path.startswith("/"):
+        return False
+    if re.match(r"^[A-Za-z]:", path) or path.startswith("//"):
+        return False
+    parts = path.split("/")
+    return all(part not in {"", ".", ".."} for part in parts)
+
+
+def _normalize_effective_config(config: Mapping[str, object]) -> tuple[tuple[str, object], ...]:
+    if not isinstance(config, Mapping):
+        raise ValueError("effective provider config must be an object")
+    unknown = set(config) - _EFFECTIVE_CONFIG_KEYS
+    if unknown:
+        raise ValueError(f"unknown effective provider config keys: {sorted(unknown)}")
+    if any(str(key).lower() in {"api_key", "token", "secret", "password"} for key in config):
+        raise ValueError("secret provider configuration is not evidence-safe")
+    if "provider" not in config or "model" not in config:
+        raise ValueError("effective provider config requires provider and model")
+    if not all(isinstance(key, str) for key in config) or not all(_json_safe(value) for value in config.values()):
+        raise ValueError("effective provider config must contain only finite JSON-safe values")
+    for key, value in config.items():
+        if key in {"provider", "model"} and (not isinstance(value, str) or not value):
+            raise ValueError(f"effective provider config value is invalid: {key}")
+        if key in {"block_model", "base_url"} and value is not None and not isinstance(value, str):
+            raise ValueError(f"effective provider config value is invalid: {key}")
+        if key == "base_url" and value is not None:
+            parsed = urlsplit(cast(str, value))
+            if parsed.query or parsed.fragment or parsed.username or parsed.password:
+                raise ValueError("base_url with query, fragment, or credentials is not evidence-safe")
+        if key in {"max_tokens", "timeout_s"} and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
+            raise ValueError(f"effective provider config value is invalid: {key}")
+        if key == "temperature" and (
+            isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+        ):
+            raise ValueError("effective provider config temperature is invalid")
+    return tuple(sorted(((key, _freeze(value)) for key, value in config.items()), key=lambda item: item[0]))
+
+
+def _normalize_request_kwargs(
+    config: Mapping[str, object] | Iterable[tuple[str, object]],
+) -> tuple[tuple[str, object], ...]:
+    values: dict[str, object] = (
+        {str(key): value for key, value in config.items()} if isinstance(config, Mapping) else dict(config)
+    )
+    if not all(isinstance(key, str) and key and "\x00" not in key for key in values):
+        raise ValueError("provider request kwargs have invalid keys")
+    if not all(_json_safe(value) for value in values.values()):
+        raise ValueError("provider request kwargs must be finite JSON-safe values")
+    return tuple(sorted(((key, _freeze(value)) for key, value in values.items()), key=lambda item: item[0]))
+
+
+def _thaw(value: object) -> object:
+    if isinstance(value, tuple):
+        return [_thaw(item) for item in value]
+    return value
+
+
+def _message_pair(item: Any) -> tuple[str, str]:
+    candidate = cast(Any, item)
+    if hasattr(candidate, "role"):
+        role, content = candidate.role, candidate.content
+    else:
+        role, content = candidate[0], candidate[1]
+    if not isinstance(role, str) or not isinstance(content, str):
+        raise ValueError("transform messages must contain strings")
+    return role, content
 
 
 def _canonical(value: object) -> bytes:
@@ -38,12 +146,14 @@ class TargetCheckpoint:
     generated_sha256: str = ""
     object_sha256: str = ""
     verdicts: tuple[str, ...] = ()
+    transform_evidence_path: str = ""
+    transform_evidence_sha256: str = ""
 
     def key(self) -> tuple[int, str]:
         return (self.address, self.name)
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        data: dict[str, object] = {
             "address": self.address,
             "name": self.name,
             "status": self.status,
@@ -58,6 +168,10 @@ class TargetCheckpoint:
             "object_sha256": self.object_sha256,
             "verdicts": list(self.verdicts),
         }
+        if self.transform_evidence_path or self.transform_evidence_sha256:
+            data["transform_evidence_path"] = self.transform_evidence_path
+            data["transform_evidence_sha256"] = self.transform_evidence_sha256
+        return data
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,14 +259,14 @@ def validate_evidence(
         raise ValueError("artifact and output hashes are required for publication")
     if evidence.inspection_output_sha256 and not _DIGEST.fullmatch(evidence.inspection_output_sha256):
         raise ValueError("malformed inspection output hash")
-    if not isinstance(evidence, BuildEvidence) or evidence.schema_version != 1:
+    if not isinstance(evidence, BuildEvidence) or evidence.schema_version not in (1, 2):
         raise ValueError("unsupported build evidence")
     for field in (evidence.project_fingerprint, evidence.manifest_sha256, evidence.recipe_sha256):
         if not isinstance(field, str) or not _DIGEST.fullmatch(field):
             raise ValueError("build evidence contains an invalid identity digest")
     if evidence.evidence_sha256 != _digest(evidence.as_dict(include_hash=False)):
         raise ValueError("stale build evidence hash")
-    if not evidence.run_id:
+    if not isinstance(evidence.run_id, str) or not _SAFE_RUN_ID.fullmatch(evidence.run_id):
         raise ValueError("build evidence requires a run_id")
     for digest in (evidence.compiler_sha256, evidence.artifact_sha256, evidence.inspection_output_sha256):
         if digest and not _DIGEST.fullmatch(digest):
@@ -160,7 +274,12 @@ def validate_evidence(
     if not _DIGEST.fullmatch(evidence.compiler_sha256) or not _DIGEST.fullmatch(evidence.toolchain_sha256):
         raise ValueError("compiler and toolchain identities are required")
     for target in evidence.targets:
-        if isinstance(target.address, bool) or not isinstance(target.address, int) or target.address < 0:
+        if (
+            isinstance(target.address, bool)
+            or not isinstance(target.address, int)
+            or target.address < 0
+            or target.address > 0xFFFFFFFFFFFFFFFF
+        ):
             raise ValueError("malformed target address in build evidence")
         if (
             not isinstance(target.name, str)
@@ -171,6 +290,8 @@ def validate_evidence(
             raise ValueError("malformed target checkpoint in build evidence")
         if not target.signature or not target.calling_convention or not target.output_path:
             raise ValueError("incomplete target manifest identity")
+        if not _safe_relative_posix(target.output_path):
+            raise ValueError("unsafe target output path")
         if "MANIFEST_BOUND" not in target.verdicts or "COMPILE_PASS" not in target.verdicts:
             raise ValueError("target evidence lacks required success verdicts")
         for digest in (target.source_sha256, target.output_sha256):
@@ -179,6 +300,16 @@ def validate_evidence(
         for digest in (target.input_sha256, target.generated_sha256, target.object_sha256):
             if not _DIGEST.fullmatch(digest):
                 raise ValueError("required target artifact hash is missing or malformed")
+        if evidence.schema_version >= 2 and (
+            not target.transform_evidence_path or not _DIGEST.fullmatch(target.transform_evidence_sha256)
+        ):
+            raise ValueError("target transform evidence path and hash are required")
+        if evidence.schema_version >= 2 and not _safe_relative_posix(target.transform_evidence_path):
+            raise ValueError("target transform evidence path is unsafe")
+    if evidence.schema_version >= 2:
+        paths = [target.transform_evidence_path for target in evidence.targets]
+        if len(paths) != len(set(paths)):
+            raise ValueError("duplicate transform evidence paths")
     for digest in (evidence.output_sha256, evidence.toolchain_sha256):
         if digest and not _DIGEST.fullmatch(digest):
             raise ValueError("malformed build output digest")
@@ -224,6 +355,8 @@ def validate_evidence(
                 "input_sha256",
                 "generated_sha256",
                 "object_sha256",
+                "transform_evidence_path",
+                "transform_evidence_sha256",
             ):
                 if getattr(current, field) != getattr(checkpoint, field):
                     raise ValueError(f"stale checkpoint identity for {key}")
@@ -231,14 +364,14 @@ def validate_evidence(
 
 def _validate_run_evidence(evidence: BuildEvidence) -> None:
     """Validate the always-recorded run envelope, including failed recipes."""
-    if not isinstance(evidence, BuildEvidence) or evidence.schema_version != 1:
+    if not isinstance(evidence, BuildEvidence) or evidence.schema_version not in (1, 2):
         raise ValueError("unsupported build evidence")
     for field in (evidence.project_fingerprint, evidence.manifest_sha256, evidence.recipe_sha256):
         if not isinstance(field, str) or not _DIGEST.fullmatch(field):
             raise ValueError("build evidence contains an invalid identity digest")
     if evidence.evidence_sha256 != _digest(evidence.as_dict(include_hash=False)):
         raise ValueError("stale build evidence hash")
-    if not isinstance(evidence.run_id, str) or not evidence.run_id:
+    if not isinstance(evidence.run_id, str) or not _SAFE_RUN_ID.fullmatch(evidence.run_id):
         raise ValueError("build evidence requires a run_id")
     if not isinstance(evidence.stdout, str) or not isinstance(evidence.stderr, str):
         raise ValueError("run evidence output must be text")
@@ -260,7 +393,12 @@ def _validate_run_evidence(evidence: BuildEvidence) -> None:
         if digest and not _DIGEST.fullmatch(digest):
             raise ValueError("malformed build identity or artifact digest")
     for target in evidence.targets:
-        if isinstance(target.address, bool) or not isinstance(target.address, int) or target.address < 0:
+        if (
+            isinstance(target.address, bool)
+            or not isinstance(target.address, int)
+            or target.address < 0
+            or target.address > 0xFFFFFFFFFFFFFFFF
+        ):
             raise ValueError("malformed target address in build evidence")
         if not target.name or not target.status:
             raise ValueError("malformed target checkpoint in build evidence")
@@ -273,7 +411,8 @@ def validate_run_evidence(evidence: BuildEvidence) -> None:
 
 def load_evidence(path: Path, *, validate_success: bool = False) -> BuildEvidence:
     """Load canonical evidence and validate its structural hash."""
-    raw = json.loads(path.read_bytes())
+    original = path.read_bytes()
+    raw = json.loads(original, object_pairs_hook=_reject_duplicate_keys, parse_constant=_reject_json_constant)
     required = {
         "schema_version",
         "project_fingerprint",
@@ -296,8 +435,16 @@ def load_evidence(path: Path, *, validate_success: bool = False) -> BuildEvidenc
         "compiler_sha256",
         "partial",
     }
-    if not isinstance(raw, dict) or set(raw) != required:
+    if not isinstance(raw, dict) or not required.issubset(raw):
         raise ValueError("malformed build evidence JSON")
+    if raw.get("schema_version") == 1:
+        # R5 evidence remains loadable for historical inspection, but is never
+        # upgraded into replayable R6 evidence.
+        for item in raw["targets"]:
+            if not isinstance(item, dict):
+                raise ValueError("malformed build evidence JSON")
+            item.pop("transform_evidence_path", None)
+            item.pop("transform_evidence_sha256", None)
     targets = tuple(TargetCheckpoint(**item) for item in raw["targets"])
     evidence = BuildEvidence(
         project_fingerprint=raw["project_fingerprint"],
@@ -321,7 +468,7 @@ def load_evidence(path: Path, *, validate_success: bool = False) -> BuildEvidenc
         compiler_sha256=raw["compiler_sha256"],
         partial=raw["partial"],
     )
-    if evidence.to_json() != _canonical(raw):
+    if evidence.to_json() != original:
         raise ValueError("non-canonical build evidence JSON")
     validate_run_evidence(evidence)
     if validate_success:
@@ -346,6 +493,237 @@ def save_evidence(evidence: BuildEvidence, path: Path) -> BuildEvidence:
     return checked
 
 
+@dataclass(frozen=True, slots=True)
+class TransformEvidence:
+    """Canonical, immutable provenance for one successfully transformed target."""
+
+    project_fingerprint: str
+    snapshot_fingerprint: str
+    manifest_raw_sha256: str
+    manifest_sha256: str
+    run_id: str
+    target_address: int
+    target_name: str
+    target_signature: str
+    target_calling_convention: str
+    target_output_path: str
+    messages: tuple[tuple[str, str], ...] | tuple[object, ...]
+    llm_config: Mapping[str, object] | tuple[tuple[str, object], ...]
+    input_text: str
+    input_sha256: str
+    raw_response: str
+    raw_response_sha256: str
+    generated_sha256: str
+    object_sha256: str
+    compiler_argv: tuple[str, ...]
+    compiler_executable_sha256: str
+    diagnostics: str = ""
+    exit_status: int = 0
+    request_kwargs: tuple[tuple[str, object], ...] = ()
+    schema_version: int = 1
+    evidence_sha256: str = ""
+
+    def __post_init__(self) -> None:
+        normalized_messages: tuple[tuple[str, str], ...] = tuple(_message_pair(item) for item in self.messages)
+        object.__setattr__(self, "messages", normalized_messages)
+        config = dict(self.llm_config) if isinstance(self.llm_config, Mapping) else dict(self.llm_config)
+        object.__setattr__(self, "llm_config", _normalize_effective_config(config))
+        object.__setattr__(self, "compiler_argv", tuple(self.compiler_argv))
+        object.__setattr__(self, "request_kwargs", _normalize_request_kwargs(self.request_kwargs))
+        if self.input_sha256 == "":
+            object.__setattr__(self, "input_sha256", _hash_text(self.input_text))
+        if self.raw_response_sha256 == "":
+            object.__setattr__(self, "raw_response_sha256", _hash_text(self.raw_response))
+
+    @property
+    def response_sha256(self) -> str:
+        return self.raw_response_sha256
+
+    @property
+    def snapshot_sha256(self) -> str:
+        return self.snapshot_fingerprint
+
+    def as_dict(self, *, include_hash: bool = True) -> dict[str, object]:
+        data: dict[str, object] = {
+            "compiler_argv": list(self.compiler_argv),
+            "compiler_executable_sha256": self.compiler_executable_sha256,
+            "diagnostics": self.diagnostics,
+            "exit_status": self.exit_status,
+            "generated_sha256": self.generated_sha256,
+            "input_sha256": self.input_sha256,
+            "input_text": self.input_text,
+            "llm_config": {key: _thaw(value) for key, value in cast(tuple[tuple[str, object], ...], self.llm_config)},
+            "manifest_raw_sha256": self.manifest_raw_sha256,
+            "manifest_sha256": self.manifest_sha256,
+            "messages": [
+                {"role": role, "content": content} for role, content in cast(tuple[tuple[str, str], ...], self.messages)
+            ],
+            "object_sha256": self.object_sha256,
+            "project_fingerprint": self.project_fingerprint,
+            "raw_response": self.raw_response,
+            "raw_response_sha256": self.raw_response_sha256,
+            "request_kwargs": {key: _thaw(value) for key, value in self.request_kwargs},
+            "run_id": self.run_id,
+            "schema_version": self.schema_version,
+            "snapshot_fingerprint": self.snapshot_fingerprint,
+            "target_address": self.target_address,
+            "target_calling_convention": self.target_calling_convention,
+            "target_name": self.target_name,
+            "target_output_path": self.target_output_path,
+            "target_signature": self.target_signature,
+        }
+        if include_hash:
+            data["evidence_sha256"] = self.evidence_sha256
+        return data
+
+    def with_hash(self) -> TransformEvidence:
+        return replace(self, evidence_sha256=_digest(self.as_dict(include_hash=False)))
+
+    def to_json(self) -> bytes:
+        return _canonical(self.as_dict())
+
+
+def validate_transform_evidence(evidence: TransformEvidence) -> None:
+    if not isinstance(evidence, TransformEvidence) or evidence.schema_version != 1:
+        raise ValueError("unsupported transform evidence")
+    if evidence.evidence_sha256 != _digest(evidence.as_dict(include_hash=False)):
+        raise ValueError("stale transform evidence hash")
+    for digest in (
+        evidence.project_fingerprint,
+        evidence.snapshot_fingerprint,
+        evidence.manifest_raw_sha256,
+        evidence.manifest_sha256,
+        evidence.input_sha256,
+        evidence.raw_response_sha256,
+        evidence.generated_sha256,
+        evidence.object_sha256,
+        evidence.compiler_executable_sha256,
+    ):
+        if not _DIGEST.fullmatch(digest):
+            raise ValueError("transform evidence contains an invalid digest")
+    if not evidence.run_id or not _SAFE_RUN_ID.fullmatch(evidence.run_id):
+        raise ValueError("transform evidence run_id is unsafe")
+    if not evidence.messages or not evidence.compiler_argv:
+        raise ValueError("transform evidence is incomplete")
+    if (
+        isinstance(evidence.target_address, bool)
+        or not isinstance(evidence.target_address, int)
+        or evidence.target_address < 0
+        or evidence.target_address > 0xFFFFFFFFFFFFFFFF
+    ):
+        raise ValueError("transform evidence target address is invalid")
+    for value in (
+        evidence.target_name,
+        evidence.target_signature,
+        evidence.target_calling_convention,
+        evidence.target_output_path,
+    ):
+        if not isinstance(value, str) or not value:
+            raise ValueError("transform evidence target identity is incomplete")
+    if not _safe_relative_posix(evidence.target_output_path):
+        raise ValueError("transform evidence output path is unsafe")
+    for role, content in cast(tuple[tuple[str, str], ...], evidence.messages):
+        if role not in {"system", "user", "assistant"} or not content:
+            raise ValueError("transform evidence messages are malformed")
+    if not all(isinstance(item, str) and item and "\x00" not in item for item in evidence.compiler_argv):
+        raise ValueError("transform compiler argv is malformed")
+    for kw_key, kw_value in evidence.request_kwargs:
+        if not isinstance(kw_key, str) or not kw_key or not _json_safe(kw_value):
+            raise ValueError("transform request kwargs must be finite JSON-safe values")
+    if not isinstance(evidence.input_text, str) or not evidence.input_text:
+        raise ValueError("transform input text is empty")
+    if not isinstance(evidence.raw_response, str) or not evidence.raw_response:
+        raise ValueError("transform raw response is empty")
+    if evidence.input_sha256 != _hash_text(evidence.input_text):
+        raise ValueError("stale transform input hash")
+    if evidence.raw_response_sha256 != _hash_text(evidence.raw_response):
+        raise ValueError("stale transform response hash")
+    if evidence.exit_status != 0:
+        raise ValueError("transform evidence does not record a successful transform")
+
+
+def load_transform_evidence(path: Path) -> TransformEvidence:
+    original = path.read_bytes()
+    raw = json.loads(original, object_pairs_hook=_reject_duplicate_keys, parse_constant=_reject_json_constant)
+    if not isinstance(raw, dict):
+        raise ValueError("malformed transform evidence JSON")
+    required = {
+        "compiler_argv",
+        "compiler_executable_sha256",
+        "diagnostics",
+        "evidence_sha256",
+        "exit_status",
+        "generated_sha256",
+        "input_sha256",
+        "input_text",
+        "llm_config",
+        "manifest_raw_sha256",
+        "manifest_sha256",
+        "messages",
+        "object_sha256",
+        "project_fingerprint",
+        "raw_response",
+        "raw_response_sha256",
+        "request_kwargs",
+        "run_id",
+        "schema_version",
+        "snapshot_fingerprint",
+        "target_address",
+        "target_calling_convention",
+        "target_name",
+        "target_output_path",
+        "target_signature",
+    }
+    if set(raw) != required:
+        raise ValueError("malformed transform evidence JSON")
+    try:
+        evidence = TransformEvidence(
+            **{
+                **raw,
+                "messages": tuple((m["role"], m["content"]) for m in raw["messages"]),
+                "llm_config": tuple(raw["llm_config"].items()),
+                "compiler_argv": tuple(raw["compiler_argv"]),
+                "request_kwargs": tuple(raw["request_kwargs"].items()),
+            }
+        )
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError("malformed transform evidence JSON") from exc
+    if evidence.to_json() != original:
+        raise ValueError("non-canonical transform evidence JSON")
+    validate_transform_evidence(evidence)
+    return evidence
+
+
+def save_transform_evidence(evidence: TransformEvidence, path: Path) -> TransformEvidence:
+    checked = evidence.with_hash()
+    validate_transform_evidence(checked)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(checked.to_json())
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        if descriptor != -1:
+            os.close(descriptor)
+    return checked
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> object:
+    raise ValueError(f"non-finite JSON value: {value}")
+
+
 __all__ = [
     "BuildEvidence",
     "TargetCheckpoint",
@@ -354,4 +732,8 @@ __all__ = [
     "save_evidence",
     "validate_evidence",
     "validate_run_evidence",
+    "TransformEvidence",
+    "load_transform_evidence",
+    "save_transform_evidence",
+    "validate_transform_evidence",
 ]

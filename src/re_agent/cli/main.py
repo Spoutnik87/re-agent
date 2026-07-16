@@ -71,6 +71,17 @@ def build_parser() -> argparse.ArgumentParser:
     build_p.add_argument(
         "--allow-partial", action="store_true", help="Deprecated; project builds never publish partial results"
     )
+
+    run_p = sub.add_parser("run", help="Verify or replay a completed project run")
+    run_sub = run_p.add_subparsers(dest="run_command", required=True)
+    for operation, help_text in (
+        ("verify", "Verify recorded run identity, checkpoints, and transform evidence"),
+        ("replay", "Replay recorded transforms offline without a live provider"),
+    ):
+        operation_p = run_sub.add_parser(operation, help=help_text)
+        operation_p.add_argument("--project-root", required=True, help="Owned generic project root")
+        operation_p.add_argument("--run-id", required=True, help="Existing project run identifier")
+        operation_p.add_argument("--profile", default=None, help="Transient generic toolchain profile")
     # pipeline
     pipe_p = sub.add_parser("pipeline", help="Run full pipeline: reverse then build")
     pipe_p.add_argument("--address", help="Single function address (delegated to reverse)")
@@ -158,6 +169,15 @@ def main(argv: list[str] | None = None) -> int:
         from re_agent.cli.cmd_build import cmd_build
 
         return cmd_build(args)
+
+    if args.command == "run":
+        from re_agent.cli.cmd_run import cmd_run
+
+        try:
+            return cmd_run(args)
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"Run rejected: {exc}")
+            return 2
 
     if args.command == "pipeline":
         from re_agent.cli.cmd_pipeline import cmd_pipeline

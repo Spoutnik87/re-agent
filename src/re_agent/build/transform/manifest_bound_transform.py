@@ -75,6 +75,11 @@ class ManifestBoundResult:
     budget: dict[str, object] = None  # type: ignore[assignment]
     provider_errors: int = 0
     error: str = ""
+    evidence_path: str = ""
+    evidence_sha256: str = ""
+    input_sha256: str = ""
+    generated_sha256: str = ""
+    object_sha256: str = ""
 
     @property
     def successful(self) -> bool:
@@ -215,6 +220,8 @@ def run_manifest_bound_transform(
     provider: Any = None,
     compile_fn: Callable[[Path, Path, Any], tuple[bool, str, str]] | None = None,
     verified_compile_command: VerifiedCommand | None = None,
+    project_fingerprint: str = "",
+    snapshot_fingerprint: str = "",
 ) -> ManifestBoundResult:
     """Execute the bounded, single-symbol preserve-ABI transform.
 
@@ -264,7 +271,10 @@ def run_manifest_bound_transform(
     if candidate.is_symlink() or not candidate.is_file():
         raise ManifestBoundTransformError("source candidate is not a regular file")
     try:
-        source = candidate.read_text(encoding="utf-8")
+        # Preserve the exact UTF-8 text represented by the source bytes. Do
+        # not use read_text here: universal-newline translation would make
+        # the captured prompt text differ from the consumed-input digest.
+        source = candidate.read_bytes().decode("utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise ManifestBoundTransformError("source candidate is not strict UTF-8") from exc
 
@@ -274,7 +284,11 @@ def run_manifest_bound_transform(
 
         provider = create_provider(llm_cfg)
     from re_agent.llm.protocol import Message, get_usage
+    from re_agent.llm.replay import RecordingProvider
 
+    effective_config = _effective_llm_config(llm_cfg)
+    if project_fingerprint and not isinstance(provider, RecordingProvider):
+        provider = RecordingProvider(provider, effective_config)
     start_usage = get_usage(provider)
     optimization = getattr(build_cfg, "optimization", None)
     max_calls = int(getattr(optimization, "max_llm_calls_per_run", 8))
@@ -395,6 +409,42 @@ def run_manifest_bound_transform(
         )
     staged_log = staging / "compiler.log"
     staged_log.write_text(compiler_log, encoding="utf-8")
+    evidence_path = staging / "transform-evidence.json"
+    evidence_sha256 = ""
+    if project_fingerprint:
+        from re_agent.build.evidence import TransformEvidence, save_transform_evidence
+
+        if not isinstance(provider, RecordingProvider) or not provider.recorded_calls:
+            raise ManifestBoundTransformError("successful transform has no recording evidence")
+        recorded = provider.recorded_calls[-1]
+        compiler_argv = _compiler_argv(command)
+        transform_evidence = TransformEvidence(
+            project_fingerprint=project_fingerprint,
+            snapshot_fingerprint=snapshot_fingerprint,
+            manifest_raw_sha256=verified_contract.raw_sha256,
+            manifest_sha256=verified_contract.canonical_sha256,
+            run_id=run_name,
+            target_address=symbol.address,
+            target_name=symbol.name,
+            target_signature=symbol.signature,
+            target_calling_convention=symbol.calling_convention.value,
+            target_output_path=symbol.output_path,
+            messages=recorded.messages,
+            llm_config=recorded.effective_config,
+            input_text=source,
+            input_sha256=_sha256(candidate),
+            raw_response=response,
+            raw_response_sha256="",
+            generated_sha256=_sha256(staged_source),
+            object_sha256=_sha256(staged_object),
+            compiler_argv=tuple(compiler_argv),
+            compiler_executable_sha256=_compiler_executable_sha256(compiler_argv, verified_compile_command),
+            request_kwargs=recorded.request_kwargs,
+            diagnostics=compiler_log,
+            exit_status=0,
+        )
+        saved_transform_evidence = save_transform_evidence(transform_evidence, evidence_path)
+        evidence_sha256 = saved_transform_evidence.evidence_sha256
     provenance = {
         "address": f"0x{numeric_address:x}",
         "output_path": artifact.path,
@@ -421,6 +471,8 @@ def run_manifest_bound_transform(
     except Exception:
         # Never remove an unpublished staging tree on a failed publication.
         raise
+    generated_sha256 = _sha256(final_unit / artifact.path)
+    object_sha256 = _sha256(final_unit / (Path(artifact.path).stem + ".o"))
     return ManifestBoundResult(
         ManifestBoundVerdict.MANIFEST_BOUND,
         numeric_address,
@@ -428,11 +480,43 @@ def run_manifest_bound_transform(
         compiler_log,
         True,
         ManifestBoundVerdict.COMPILE_PASS,
+        evidence_path=str(final_unit / "transform-evidence.json") if evidence_sha256 else "",
+        evidence_sha256=evidence_sha256,
+        input_sha256=_sha256(candidate),
+        generated_sha256=generated_sha256,
+        object_sha256=object_sha256,
     )
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _effective_llm_config(config: Any) -> dict[str, object]:
+    if config is None:
+        return {"provider": "injected", "model": "injected"}
+    return {
+        key: getattr(config, key)
+        for key in ("provider", "model", "block_model", "base_url", "max_tokens", "temperature", "timeout_s")
+        if hasattr(config, key)
+    }
+
+
+def _compiler_argv(command: str) -> list[str]:
+    try:
+        parsed = json.loads(command)
+    except json.JSONDecodeError:
+        parsed = shlex.split(command)
+    if not isinstance(parsed, list) or not all(isinstance(item, str) and item for item in parsed):
+        raise ManifestBoundTransformError("compiler command did not produce a complete argv")
+    return parsed
+
+
+def _compiler_executable_sha256(argv: list[str], verified: VerifiedCommand | None) -> str:
+    if verified is not None:
+        return verified.executable_sha256
+    executable = shutil.which(argv[0]) or argv[0]
+    return _sha256(Path(executable))
 
 
 def _compile_verified(source: Path, object_path: Path, command: VerifiedCommand) -> tuple[bool, str, str]:
@@ -466,6 +550,6 @@ def _compile_real(source: Path, obj: Path, cfg: Any) -> tuple[bool, str, str]:
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, str(exc), " ".join(command)
+        return False, str(exc), json.dumps(command)
     log = completed.stderr + completed.stdout
-    return completed.returncode == 0, log, " ".join(command)
+    return completed.returncode == 0, log, json.dumps(command)

@@ -12,8 +12,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from re_agent.build.evidence import load_evidence
+from re_agent.build.evidence import TransformEvidence, load_evidence, load_transform_evidence, save_transform_evidence
 from re_agent.build.recipe import BuildRecipe
+from re_agent.build.transform.manifest_bound_transform import build_preserve_abi_prompt
 from re_agent.cli.main import main
 from re_agent.contracts.manifest import manifest_from_symbols
 from re_agent.contracts.model import Architecture, CallingConvention, Symbol
@@ -55,9 +56,10 @@ def project(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     verified = VerifiedContract(manifest, root / "manifest.json", _digest(b"raw"), manifest.sha256_hash)
     config = SimpleNamespace(
         build=SimpleNamespace(
-            input=SimpleNamespace(ghidra_exports=""), output=SimpleNamespace(target_dir=str(compiled))
+            input=SimpleNamespace(ghidra_exports="", decompiled_dir=str(snapshot)),
+            output=SimpleNamespace(target_dir=str(compiled)),
         ),
-        llm=SimpleNamespace(),
+        llm=SimpleNamespace(provider="fake", model="fixture"),
         pipeline=SimpleNamespace(),
         contracts=SimpleNamespace(verified_manifest=verified),
     )
@@ -90,15 +92,63 @@ def project(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     )
     transform_calls: list[int] = []
     recipe_calls: list[object] = []
+    for symbol in manifest.symbols:
+        (snapshot / f"0x{symbol.address:x}__{symbol.name}.cpp").write_bytes(
+            f"int {symbol.name}() {{ return {symbol.address}; }}\n".encode()
+        )
 
-    def fake_transform(build_cfg, _llm, _manifest, address, *, run_id, persist, verified_compile_command):
+    def fake_transform(
+        build_cfg,
+        _llm,
+        _manifest,
+        address,
+        *,
+        run_id,
+        persist,
+        verified_compile_command,
+        project_fingerprint,
+        snapshot_fingerprint,
+    ):
         transform_calls.append(address)
         symbol = next(item for item in manifest.symbols if item.address == address)
         unit = Path(build_cfg.output.target_dir) / ".manifest-bound" / run_id / f"0x{address:x}"
         source = unit / symbol.output_path
         source.parent.mkdir(parents=True, exist_ok=True)
-        source.write_text(f"int {symbol.name}() {{ return {address}; }}\n", encoding="utf-8")
-        (unit / f"{Path(symbol.output_path).stem}.o").write_bytes(b"object")
+        generated_bytes = f"int {symbol.name}() {{ return {address}; }}\n".encode()
+        source.write_bytes(generated_bytes)
+        object_path = unit / f"{Path(symbol.output_path).stem}.o"
+        object_bytes = b"object"
+        object_path.write_bytes(object_bytes)
+        input_path = Path(build_cfg.input.decompiled_dir) / f"0x{address:x}__{symbol.name}.cpp"
+        input_bytes = input_path.read_bytes()
+        input_text = input_bytes.decode("utf-8")
+        prompt = build_preserve_abi_prompt(symbol, input_text, manifest)
+        raw_response = f"// TARGET: 0x{address:x}\n// FILE: {symbol.output_path}\n{generated_bytes.decode()}"
+        save_transform_evidence(
+            TransformEvidence(
+                project_fingerprint=project_fingerprint,
+                snapshot_fingerprint=snapshot_fingerprint,
+                manifest_raw_sha256=verified.raw_sha256,
+                manifest_sha256=verified.canonical_sha256,
+                run_id=run_id,
+                target_address=address,
+                target_name=symbol.name,
+                target_signature=symbol.signature,
+                target_calling_convention=symbol.calling_convention.value,
+                target_output_path=symbol.output_path,
+                messages=(("system", prompt.system), ("user", prompt.user)),
+                llm_config={"provider": "fake", "model": "fixture"},
+                input_text=input_text,
+                input_sha256=_digest(input_bytes),
+                raw_response=raw_response,
+                raw_response_sha256="",
+                generated_sha256=_digest(generated_bytes),
+                object_sha256=_digest(object_bytes),
+                compiler_argv=tuple(verified_compile_command.argv),
+                compiler_executable_sha256=verified_compile_command.executable_sha256,
+            ),
+            unit / "transform-evidence.json",
+        )
         return SimpleNamespace(successful=True)
 
     monkeypatch.setattr("re_agent.cli.cmd_build.load_config", lambda *args, **kwargs: config)
@@ -238,6 +288,18 @@ def test_successful_recipe_publishes_authenticated_immutable_build(project) -> N
     assert run_identity["recipe_sha256"] == project.recipe.recipe_sha256
     assert evidence.recipe_sha256 == run_identity["recipe_sha256"]
     assert evidence.partial is False
+    assert evidence.schema_version == 2
+    for checkpoint in evidence.targets:
+        transform_path = active.directory / checkpoint.transform_evidence_path
+        source_path = active.directory / checkpoint.output_path
+        object_path = active.directory / Path(checkpoint.output_path).with_suffix(".o")
+        assert transform_path.is_file()
+        assert source_path.is_file()
+        assert object_path.is_file()
+        assert _digest(transform_path.read_bytes()) == checkpoint.transform_evidence_sha256
+        transform = load_transform_evidence(transform_path)
+        assert transform.generated_sha256 == _digest(source_path.read_bytes())
+        assert transform.object_sha256 == _digest(object_path.read_bytes())
     assert active.artifact_sha256 == _digest(b"artifact")
     pointer = json.loads((project.root / "build" / "active.json").read_text(encoding="utf-8"))
     assert pointer["authentication"]["algorithm"] == "sha256"

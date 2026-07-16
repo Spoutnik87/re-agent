@@ -10,7 +10,7 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from re_agent.adapters import (
     AdapterAttachment,
@@ -20,7 +20,13 @@ from re_agent.adapters import (
     AdapterResult,
     execute_adapter_with_evidence,
 )
-from re_agent.build import BuildEvidence, load_evidence, validate_evidence
+from re_agent.build import (
+    BuildEvidence,
+    load_evidence,
+    load_transform_evidence,
+    validate_evidence,
+    validate_transform_evidence,
+)
 from re_agent.contracts import Symbol
 from re_agent.project import BuildPublication, VerifiedProjectContext, load_active_build, load_verified_project
 from re_agent.project.snapshot import sha256_file
@@ -229,7 +235,9 @@ class PromotionService:
 
     def _load_build(self, context: VerifiedProjectContext, candidate: str | None) -> _Build:
         publication = load_active_build(self.build_root) if candidate is None else self._selected_build(candidate)
-        evidence = load_evidence(publication.directory / publication.evidence, validate_success=False)
+        evidence_path = self._contained_build_file(publication.directory, publication.evidence)
+        artifact_path = self._contained_build_file(publication.directory, publication.artifact)
+        evidence = load_evidence(evidence_path, validate_success=False)
         expected = tuple((symbol.address, symbol.name) for symbol in context.verified_abi_manifest.value.symbols)
         validate_evidence(
             evidence,
@@ -237,10 +245,12 @@ class PromotionService:
             project_fingerprint=context.identity.project_fingerprint,
             manifest_sha256=context.verified_abi_manifest.canonical_sha256,
         )
-        if sha256_file(publication.directory / publication.artifact) != publication.artifact_sha256:
+        if sha256_file(artifact_path) != publication.artifact_sha256:
             raise ValueError("published artifact hash mismatch")
         for symbol in context.verified_abi_manifest.value.symbols:
             self._verify_checkpoint(context, publication.directory, evidence, symbol)
+        if evidence.schema_version >= 2:
+            self._verify_transform_evidence(context, publication.directory, evidence)
         return _Build(publication, evidence, publication.directory, publication.publication_id)
 
     def _selected_build(self, candidate: str) -> BuildPublication:
@@ -249,9 +259,9 @@ class PromotionService:
         directory = self.build_root / "builds" / candidate
         if not (directory / "artifact").is_file() or not (directory / "evidence").is_file():
             raise ValueError("selected candidate build is absent")
-        return BuildPublication(
-            candidate, directory, sha256_file(directory / "artifact"), sha256_file(directory / "evidence")
-        )
+        artifact = self._contained_build_file(directory, "artifact")
+        evidence = self._contained_build_file(directory, "evidence")
+        return BuildPublication(candidate, directory, sha256_file(artifact), sha256_file(evidence))
 
     def _verify_checkpoint(
         self, context: VerifiedProjectContext, build_directory: Path, evidence: BuildEvidence, symbol: Symbol
@@ -261,12 +271,19 @@ class PromotionService:
         )
         if checkpoint is None:
             raise ValueError(f"build evidence does not cover target {symbol.name}")
-        source_file = build_directory / checkpoint.output_path
-        object_file = build_directory / Path(checkpoint.output_path).with_suffix(".o")
+        source_file = self._contained_build_file(build_directory, checkpoint.output_path)
+        object_file = self._contained_build_file(
+            build_directory, PurePosixPath(checkpoint.output_path).with_suffix(".o").as_posix()
+        )
+        source_hash = checkpoint.source_sha256
+        generated_hash = getattr(checkpoint, "generated_sha256", source_hash)
+        output_hash = getattr(checkpoint, "output_sha256", source_hash)
         if (
             source_file.is_symlink()
             or not source_file.is_file()
-            or sha256_file(source_file) != checkpoint.source_sha256
+            or sha256_file(source_file) != source_hash
+            or getattr(evidence, "schema_version", 1) >= 2
+            and not (source_hash == generated_hash == output_hash)
         ):
             raise ValueError(f"source hash is absent or stale for {symbol.name}")
         if (
@@ -275,6 +292,77 @@ class PromotionService:
             or sha256_file(object_file) != checkpoint.object_sha256
         ):
             raise ValueError(f"object hash is absent or stale for {symbol.name}")
+
+    def _verify_transform_evidence(
+        self, context: VerifiedProjectContext, build_directory: Path, evidence: BuildEvidence
+    ) -> None:
+        scheduled = {
+            (symbol.address, symbol.name): (symbol, index)
+            for index, symbol in enumerate(
+                sorted(
+                    context.verified_abi_manifest.value.symbols,
+                    key=lambda item: (item.address, item.name),
+                )
+            )
+        }
+        for checkpoint in evidence.targets:
+            scheduled_target = scheduled.get(checkpoint.key())
+            if scheduled_target is None:
+                raise ValueError("transform evidence target is not in the verified manifest")
+            symbol, index = scheduled_target
+            transform_path = self._contained_build_file(build_directory, checkpoint.transform_evidence_path)
+            if sha256_file(transform_path) != checkpoint.transform_evidence_sha256:
+                raise ValueError(f"transform evidence hash mismatch for {checkpoint.name}")
+            transform = load_transform_evidence(transform_path)
+            validate_transform_evidence(transform)
+            if (
+                transform.project_fingerprint != context.identity.project_fingerprint
+                or transform.snapshot_fingerprint != context.identity.snapshot_manifest_sha256
+                or transform.manifest_raw_sha256 != context.verified_abi_manifest.raw_sha256
+                or transform.manifest_sha256 != context.verified_abi_manifest.canonical_sha256
+                or transform.run_id != f"{evidence.run_id}-{index}"
+            ):
+                raise ValueError(f"transform evidence project identity mismatch for {checkpoint.name}")
+            if (
+                transform.target_address != symbol.address
+                or transform.target_name != symbol.name
+                or transform.target_signature != symbol.signature
+                or transform.target_calling_convention != symbol.calling_convention.value
+                or transform.target_output_path != checkpoint.output_path
+            ):
+                raise ValueError(f"transform evidence target identity mismatch for {checkpoint.name}")
+            if (
+                transform.input_sha256 != checkpoint.input_sha256
+                or transform.generated_sha256 != checkpoint.generated_sha256
+                or transform.generated_sha256 != checkpoint.output_sha256
+                or transform.object_sha256 != checkpoint.object_sha256
+            ):
+                raise ValueError(f"transform evidence artifact identity mismatch for {checkpoint.name}")
+
+    @staticmethod
+    def _contained_build_file(root: Path, relative: str) -> Path:
+        if (
+            not isinstance(relative, str)
+            or not relative
+            or "\\" in relative
+            or PurePosixPath(relative).is_absolute()
+            or any(part in {"", ".", ".."} for part in relative.split("/"))
+        ):
+            raise ValueError("unsafe transform evidence path")
+        root_resolved = root.resolve()
+        current = root
+        for part in relative.split("/"):
+            current = current / part
+            if current.is_symlink():
+                raise ValueError("transform evidence path contains a link")
+        resolved = current.resolve()
+        try:
+            resolved.relative_to(root_resolved)
+        except ValueError as exc:
+            raise ValueError("transform evidence path escapes build publication") from exc
+        if not resolved.is_file() or resolved.is_symlink():
+            raise ValueError("transform evidence file is absent or unsafe")
+        return resolved
 
     def _verified_input(self, path: Path | None, context: VerifiedProjectContext) -> str:
         if path is None:
@@ -492,11 +580,18 @@ class PromotionService:
         proof_type: str,
         invocations: tuple[_Invocation, ...],
     ) -> ProofBundle:
+        evidence_schema_version = int(getattr(getattr(build, "evidence", None), "schema_version", 1))
         evidence: list[ProofEvidence] = [
             ProofEvidence(
                 "compile",
                 symbol.name,
-                {"passed": True, "build": build.identity, "artifact_sha256": build.publication.artifact_sha256},
+                {
+                    "passed": True,
+                    "build": build.identity,
+                    "artifact_sha256": build.publication.artifact_sha256,
+                    "build_evidence_schema_version": str(evidence_schema_version),
+                    "replayable": evidence_schema_version >= 2,
+                },
             )
         ]
         for invocation in invocations:
