@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from re_agent.build.evidence import validate_run_id
 from re_agent.config.loader import load_config
 from re_agent.project.context import load_verified_project
 
@@ -34,14 +35,6 @@ def _load_json(path: Path) -> object:
         path.read_bytes(),
         object_pairs_hook=_reject_duplicate_keys,
         parse_constant=_reject_constant,
-    )
-
-
-def _safe_run_id(run_id: str) -> bool:
-    return (
-        bool(run_id)
-        and run_id not in {".", ".."}
-        and all(character.isalnum() or character in "._-" for character in run_id)
     )
 
 
@@ -340,8 +333,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.run_command not in {"verify", "replay"}:
         raise ValueError("unsupported run operation")
     run_id = args.run_id
-    if not _safe_run_id(run_id):
-        raise ValueError("--run-id must be a safe path component")
+    try:
+        validate_run_id(run_id)
+    except ValueError as exc:
+        raise ValueError(f"--run-id must be a safe path component: {exc}") from None
     project_root = Path(args.project_root)
     profile_raw = getattr(args, "profile", None)
     # These checks intentionally happen before RunLock: RunLock creates its

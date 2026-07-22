@@ -15,6 +15,9 @@ from urllib.parse import urlsplit
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_WINDOWS_RESERVED: frozenset[str] = frozenset(
+    {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
+)
 _EFFECTIVE_CONFIG_KEYS = {
     "provider",
     "model",
@@ -59,6 +62,32 @@ def _safe_relative_posix(path: str) -> bool:
         return False
     parts = path.split("/")
     return all(part not in {"", ".", ".."} for part in parts)
+
+
+def validate_run_id(run_id: str) -> str:
+    """Validate and return a safe run ID, or raise ``ValueError``.
+
+    Rules
+    -----
+    * Only ASCII alphanumeric, hyphen, underscore, dot characters.
+    * Must not be empty.
+    * Must not start or end with a dot or hyphen.
+    * Must not be a Windows reserved device name
+      (``CON``, ``PRN``, ``AUX``, ``NUL``, ``COM1``-``COM9``, ``LPT1``-``LPT9``).
+    """
+    if not isinstance(run_id, str) or not run_id:
+        raise ValueError("run_id must be a non-empty string")
+    if not all(c.isascii() and (c.isalnum() or c in "._-") for c in run_id):
+        raise ValueError("run_id must contain only ASCII alphanumeric, hyphen, underscore, or dot characters")
+    if run_id.startswith(".") or run_id.endswith("."):
+        raise ValueError("run_id must not start or end with a dot")
+    if run_id.startswith("-") or run_id.endswith("-"):
+        raise ValueError("run_id must not start or end with a hyphen")
+    name = run_id.upper()
+    bare = name.split(".")[0]
+    if bare in _WINDOWS_RESERVED:
+        raise ValueError(f"run_id must not be a Windows reserved device name: {run_id!r}")
+    return run_id
 
 
 def _normalize_effective_config(config: Mapping[str, object]) -> tuple[tuple[str, object], ...]:
@@ -266,8 +295,10 @@ def validate_evidence(
             raise ValueError("build evidence contains an invalid identity digest")
     if evidence.evidence_sha256 != _digest(evidence.as_dict(include_hash=False)):
         raise ValueError("stale build evidence hash")
-    if not isinstance(evidence.run_id, str) or not _SAFE_RUN_ID.fullmatch(evidence.run_id):
-        raise ValueError("build evidence requires a run_id")
+    try:
+        validate_run_id(evidence.run_id)
+    except ValueError:
+        raise ValueError("build evidence requires a run_id") from None
     for digest in (evidence.compiler_sha256, evidence.artifact_sha256, evidence.inspection_output_sha256):
         if digest and not _DIGEST.fullmatch(digest):
             raise ValueError("malformed build identity or artifact digest")
@@ -371,8 +402,10 @@ def _validate_run_evidence(evidence: BuildEvidence) -> None:
             raise ValueError("build evidence contains an invalid identity digest")
     if evidence.evidence_sha256 != _digest(evidence.as_dict(include_hash=False)):
         raise ValueError("stale build evidence hash")
-    if not isinstance(evidence.run_id, str) or not _SAFE_RUN_ID.fullmatch(evidence.run_id):
-        raise ValueError("build evidence requires a run_id")
+    try:
+        validate_run_id(evidence.run_id)
+    except ValueError:
+        raise ValueError("build evidence requires a run_id") from None
     if not isinstance(evidence.stdout, str) or not isinstance(evidence.stderr, str):
         raise ValueError("run evidence output must be text")
     if not isinstance(evidence.output_path, str):
@@ -601,8 +634,10 @@ def validate_transform_evidence(evidence: TransformEvidence) -> None:
     ):
         if not _DIGEST.fullmatch(digest):
             raise ValueError("transform evidence contains an invalid digest")
-    if not evidence.run_id or not _SAFE_RUN_ID.fullmatch(evidence.run_id):
-        raise ValueError("transform evidence run_id is unsafe")
+    try:
+        validate_run_id(evidence.run_id)
+    except ValueError:
+        raise ValueError("transform evidence run_id is unsafe") from None
     if not evidence.messages or not evidence.compiler_argv:
         raise ValueError("transform evidence is incomplete")
     if (
@@ -732,6 +767,7 @@ __all__ = [
     "save_evidence",
     "validate_evidence",
     "validate_run_evidence",
+    "validate_run_id",
     "TransformEvidence",
     "load_transform_evidence",
     "save_transform_evidence",

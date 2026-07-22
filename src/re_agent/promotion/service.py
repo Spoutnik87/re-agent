@@ -36,7 +36,16 @@ from re_agent.promotion.derive import (
     revalidate_proof_bundle,
 )
 from re_agent.promotion.journal import PromotionBatch, PromotionJournal
-from re_agent.promotion.models import ProjectState, PromotionState, ProofBundle, ProofEvidence, TargetState
+from re_agent.promotion.lock import PromotionLock
+from re_agent.promotion.models import (
+    ProjectState,
+    PromotionState,
+    ProofBundle,
+    ProofEvidence,
+    TargetState,
+    canonical_target,
+    parse_target,
+)
 from re_agent.promotion.store import ImmutableEvidenceStore, PromotionViewPublisher
 from re_agent.toolchain.activation import VerifiedCommand, resolve_capability, verify_command
 
@@ -110,7 +119,8 @@ class PromotionService:
     def inspect_abi(
         self, *, target: str | None = None, candidate: str | None = None
     ) -> PromotionResult | tuple[PromotionResult, ...]:
-        return self._run_stage("inspect_abi", "abi", target=target, candidate=candidate)
+        with PromotionLock(self.promotion_root):
+            return self._run_stage("inspect_abi", "abi", target=target, candidate=candidate)
 
     def run_differential(
         self,
@@ -119,13 +129,14 @@ class PromotionService:
         target: str | None = None,
         candidate: str | None = None,
     ) -> PromotionResult | tuple[PromotionResult, ...]:
-        return self._run_stage(
-            "run_differential",
-            "differential",
-            target=target,
-            candidate=candidate,
-            original=Path(original_binary_equivalent),
-        )
+        with PromotionLock(self.promotion_root):
+            return self._run_stage(
+                "run_differential",
+                "differential",
+                target=target,
+                candidate=candidate,
+                original=Path(original_binary_equivalent),
+            )
 
     def promote(
         self,
@@ -133,7 +144,7 @@ class PromotionService:
         original_binary_equivalent: Path,
         target: str | None = None,
         candidate: str | None = None,
-    ) -> PromotionResult | tuple[PromotionResult, ...]:
+    ) -> tuple[PromotionResult, ...]:
         """Run ABI and differential proofs before mutating any journal/pointer.
 
         This is the atomic all-target entry point.  A single target also gets
@@ -142,19 +153,27 @@ class PromotionService:
         """
         context = load_verified_project(self.project_root)
         build = self._load_build(context, candidate)
-        symbols = self._select_symbols(context, target)
+        symbols = self._select_symbols(context, None)
         original_rel = self._verified_input(Path(original_binary_equivalent), context)
         commands = self._commands("inspect_abi") + self._commands("run_differential")
-        with tempfile.TemporaryDirectory(prefix="promotion-", dir=self.promotion_root) as raw:
+        with (
+            PromotionLock(self.promotion_root),
+            tempfile.TemporaryDirectory(prefix="promotion-", dir=self.promotion_root) as raw,
+        ):
             staging = Path(raw)
             self._stage_inputs(staging, context, build, original_rel)
             bundles = tuple(
                 self._complete_bundle(context, build, symbol, commands, original_rel, staging) for symbol in symbols
             )
-            return self._commit(context, build, bundles, target)
+            return self._commit(context, build, bundles, None)
 
     def status(self, *, candidate: str | None = None) -> ProjectState:
         """Derive status from the current verified project/build, not history alone."""
+        with PromotionLock(self.promotion_root):
+            return self._status_unlocked(candidate)
+
+    def _status_unlocked(self, candidate: str | None = None) -> ProjectState:
+        """Status derivation without lock (caller must hold PromotionLock)."""
         context = load_verified_project(self.project_root)
         try:
             build = self._load_build(context, candidate)
@@ -228,7 +247,11 @@ class PromotionService:
 
     def _select_symbols(self, context: VerifiedProjectContext, target: str | None) -> tuple[Symbol, ...]:
         symbols = tuple(context.verified_abi_manifest.value.symbols)
-        selected = tuple(symbol for symbol in symbols if target is None or symbol.name == target)
+        if target is not None:
+            parsed_addr, parsed_name = parse_target(target)
+            selected = tuple(s for s in symbols if s.address == parsed_addr and s.name == parsed_name)
+        else:
+            selected = symbols
         if not selected or (target is not None and len(selected) != 1):
             raise ValueError("unknown or ambiguous promotion target")
         return selected
@@ -580,11 +603,12 @@ class PromotionService:
         proof_type: str,
         invocations: tuple[_Invocation, ...],
     ) -> ProofBundle:
+        canonical = canonical_target(symbol.address, symbol.name)
         evidence_schema_version = int(getattr(getattr(build, "evidence", None), "schema_version", 1))
         evidence: list[ProofEvidence] = [
             ProofEvidence(
                 "compile",
-                symbol.name,
+                canonical,
                 {
                     "passed": True,
                     "build": build.identity,
@@ -607,7 +631,7 @@ class PromotionService:
             evidence.append(
                 ProofEvidence(
                     proof_type,
-                    symbol.name,
+                    canonical,
                     {
                         "passed": True,
                         "build": build.identity,
@@ -627,7 +651,7 @@ class PromotionService:
                     },
                 )
             )
-        return ProofBundle(context.identity.name, symbol.name, build.identity, tuple(evidence)).sealed()
+        return ProofBundle(context.identity.name, canonical, build.identity, tuple(evidence)).sealed()
 
     def _commit(
         self, context: VerifiedProjectContext, build: _Build, bundles: tuple[ProofBundle, ...], target: str | None
@@ -730,7 +754,9 @@ class PromotionService:
             if "absent" in str(exc):
                 raise _StaleEvidenceError("historical proof build is absent") from exc
             raise _CorruptEvidenceError("journal-referenced proof build is corrupt") from exc
-        checkpoint = next((item for item in build.evidence.targets if item.name == bundle.target), None)
+        checkpoint = next(
+            (item for item in build.evidence.targets if item.name == parse_target(bundle.target)[1]), None
+        )
         if checkpoint is None:
             raise _StaleEvidenceError("proof bundle target is absent from current build")
         commands: dict[str, tuple[VerifiedCommand, VerifiedCommand]] = {}
@@ -797,7 +823,7 @@ class PromotionService:
                     raise _CorruptEvidenceError("outer stage 1 attachment binding differs from request")
                 if (
                     request_payload.get("address") != str(checkpoint.address)
-                    or request_payload.get("name") != bundle.target
+                    or request_payload.get("name") != parse_target(bundle.target)[1]
                 ):
                     raise _StaleEvidenceError("proof request target identity is stale")
                 capability = "inspect_abi" if evidence.evidence_type == "abi" else "run_differential"
@@ -887,7 +913,7 @@ class PromotionService:
         candidate: str,
     ) -> ProjectState | None:
         latest = self._current_bundles(context, candidate)
-        expected = tuple(symbol.name for symbol in context.verified_abi_manifest.value.symbols)
+        expected = tuple(canonical_target(s.address, s.name) for s in context.verified_abi_manifest.value.symbols)
         if set(latest) != set(expected):
             return None
         if any(not self._bundle_has_complete_stages(bundle) for bundle in latest.values()):
@@ -898,7 +924,10 @@ class PromotionService:
         state = derive_project_state(
             context.identity.name,
             candidate,
-            tuple(derive_target_state(latest[name]) for name in expected),
+            tuple(
+                derive_target_state(latest[canonical_target(s.address, s.name)])
+                for s in context.verified_abi_manifest.value.symbols
+            ),
             batch_hash=batch.record_hash,
         )
         if state.state is PromotionState.PROMOTED:
@@ -909,7 +938,9 @@ class PromotionService:
     def _batch_for_current(
         self, context: VerifiedProjectContext, candidate: str, bundles: dict[str, ProofBundle]
     ) -> PromotionBatch | None:
-        expected_targets = tuple(sorted(symbol.name for symbol in context.verified_abi_manifest.value.symbols))
+        expected_targets = tuple(
+            sorted(canonical_target(s.address, s.name) for s in context.verified_abi_manifest.value.symbols)
+        )
         expected_bundles = tuple(sorted(bundle.bundle_sha256 for bundle in bundles.values()))
         for record in reversed(PromotionJournal(self.promotion_root / "journal.jsonl").records()):
             if record.project != context.identity.name or record.candidate != candidate:
@@ -943,7 +974,11 @@ class PromotionService:
             active_bundles = {
                 item.get("target"): item.get("bundle_sha256") for item in targets if isinstance(item, dict)
             }
-            return active_bundles == {target: bundle.bundle_sha256 for target, bundle in bundles.items()}
+            expected = {
+                canonical_target(s.address, s.name): bundle.bundle_sha256
+                for s, bundle in zip(context.verified_abi_manifest.value.symbols, bundles.values(), strict=True)
+            }
+            return active_bundles == expected
         except (OSError, TypeError, ValueError, KeyError):
             return False
 

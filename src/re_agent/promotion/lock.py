@@ -4,9 +4,88 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 import threading
 from pathlib import Path
-from typing import BinaryIO, ClassVar
+from typing import Any, BinaryIO, ClassVar, cast
+
+if sys.platform == "win32":
+    import ctypes
+    import msvcrt as _msvcrt_module
+    from ctypes import wintypes
+
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    _kernel32.CreateFileW.restype = wintypes.HANDLE
+    _kernel32.GetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+    _kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+    _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _kernel32.CloseHandle.restype = wintypes.BOOL
+
+    class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", wintypes.DWORD),
+            ("ftCreationTime", wintypes.FILETIME),
+            ("ftLastAccessTime", wintypes.FILETIME),
+            ("ftLastWriteTime", wintypes.FILETIME),
+            ("dwVolumeSerialNumber", wintypes.DWORD),
+            ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD),
+            ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD),
+            ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+
+def _windows_open_non_reparse(path: str) -> int | None:
+    """Open *path* with reparse-point detection, returning fd or None.
+
+    Uses CreateFileW + FILE_FLAG_OPEN_REPARSE_POINT + GetFileInformationByHandle
+    to atomically detect reparse points on the same handle. Returns None if
+    not on Windows.
+    """
+    if sys.platform != "win32":
+        return None
+    GENERIC_READ = 0x80000000
+    GENERIC_WRITE = 0x40000000
+    FILE_SHARE_READ = 0x00000001
+    FILE_SHARE_WRITE = 0x00000002
+    OPEN_ALWAYS = 4
+    FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+    FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+    INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
+
+    handle = _kernel32.CreateFileW(
+        path,
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        None,
+        OPEN_ALWAYS,
+        FILE_FLAG_OPEN_REPARSE_POINT,
+        None,
+    )
+    if handle == INVALID_HANDLE_VALUE:
+        err = ctypes.get_last_error()
+        raise OSError(err, ctypes.FormatError(err).strip(), path)
+
+    info = _BY_HANDLE_FILE_INFORMATION()
+    if not _kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+        _kernel32.CloseHandle(handle)
+        raise ctypes.WinError()
+
+    if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT:
+        _kernel32.CloseHandle(handle)
+        raise ValueError(f"lock file is a reparse point: {path}")
+
+    return _msvcrt_module.open_osfhandle(handle, os.O_RDWR | getattr(os, "O_NOINHERIT", 0))
 
 
 class PromotionLock:
@@ -49,7 +128,7 @@ class PromotionLock:
         handle: BinaryIO | None = None
         root_fd: int | None = None
         try:
-            use_no_follow = os.name != "nt"
+            use_no_follow = sys.platform != "win32"
             root_fd = _open_verified_root(self.root, self._verified_root_identity, self._verified_parent_identity)
             if root_fd is not None:
                 _validate_retained_root(
@@ -68,11 +147,13 @@ class PromotionLock:
                 )
                 handle = os.fdopen(descriptor, "r+b")
             else:
-                descriptor = os.open(
-                    self.path,
-                    os.O_RDWR | os.O_CREAT,
-                    0o600,
-                )
+                fd = _windows_open_non_reparse(str(self.path))
+                if fd is not None:
+                    descriptor = fd
+                else:
+                    # Non-Windows fallback that doesn't have no-follow:
+                    # fail closed — promotion requires verified root.
+                    raise RuntimeError("promotion lock requires POSIX no-follow or Windows reparse-safe opening")
                 handle = os.fdopen(descriptor, "r+b")
             if root_fd is not None:
                 _validate_retained_root(
@@ -87,11 +168,13 @@ class PromotionLock:
                 import msvcrt
 
                 handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                msvcrt_module = cast(Any, msvcrt)
+                msvcrt_module.locking(handle.fileno(), msvcrt_module.LK_LOCK, 1)
             else:
                 import fcntl
 
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)  # type: ignore[attr-defined]
+                fcntl_module = cast(Any, fcntl)
+                fcntl_module.flock(handle.fileno(), fcntl_module.LOCK_EX)
             identity = _validate_lock_file(self.path, handle, self._identities.get(self._key), root_fd)
             self._identities.setdefault(self._key, identity)
             self._handles[self._key] = handle
@@ -125,11 +208,13 @@ class PromotionLock:
                     import msvcrt
 
                     handle.seek(0)
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    msvcrt_module = cast(Any, msvcrt)
+                    msvcrt_module.locking(handle.fileno(), msvcrt_module.LK_UNLCK, 1)
                 else:
                     import fcntl
 
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
+                    fcntl_module = cast(Any, fcntl)
+                    fcntl_module.flock(handle.fileno(), fcntl_module.LOCK_UN)
             finally:
                 handle.close()
                 if root_fd is not None:

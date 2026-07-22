@@ -87,6 +87,17 @@ def _context(targets: tuple[str, ...]):
     )
 
 
+def _canonical(targets: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(f"{index}:{name}" for index, name in enumerate(targets))
+
+
+def _canonical_one(target: str) -> str:
+    """Return the canonical form for the first symbol in the default _context."""
+    targets = ("one",)
+    canon = _canonical(targets)
+    return canon[0]
+
+
 def test_all_target_failure_leaves_journal_and_pointer_unchanged(monkeypatch, tmp_path):
     targets = ("one", "two")
     service = _FakeService(tmp_path, targets, failing="two")
@@ -121,8 +132,8 @@ def test_sequential_abi_then_differential_accumulates_and_promotes(monkeypatch, 
 
 def test_all_target_compile_proof_is_deduplicated_when_merging():
     service = object.__new__(PromotionService)
-    current = _proof("one", "abi")
-    incoming = _proof("one", "differential")
+    current = _proof("0:one", "abi")
+    incoming = _proof("0:one", "differential")
     merged = service._merge_bundle(current, incoming)
     assert [item.evidence_type for item in merged.evidence].count("compile") == 1
     assert {item.evidence_type for item in merged.evidence} == {"compile", "abi", "differential"}
@@ -133,8 +144,10 @@ def test_project_wide_merge_deduplicates_compile_for_every_target(monkeypatch, t
     service = _FakeService(tmp_path, targets)
     context = _context(targets)
     monkeypatch.setattr("re_agent.promotion.service.load_verified_project", lambda root: context)
-    merged = tuple(service._merge_bundle(_proof(target, "abi"), _proof(target, "differential")) for target in targets)
-    assert {item.target for item in merged} == set(targets)
+    merged = tuple(
+        service._merge_bundle(_proof(canon, "abi"), _proof(canon, "differential")) for canon in _canonical(targets)
+    )
+    assert {item.target for item in merged} == set(_canonical(targets))
     assert all(sum(item.evidence_type == "compile" for item in bundle.evidence) == 1 for bundle in merged)
 
 
@@ -146,7 +159,7 @@ def test_required_executable_identities_are_persisted(monkeypatch, tmp_path):
         "_resolve",
         lambda **kwargs: (VerifiedCommand(("inspector",), "a" * 64), VerifiedCommand(("verifier",), "b" * 64)),
     )
-    service.inspect_abi(target="one")
+    service.inspect_abi(target="0:one")
     records = service.promotion_root / "journal.jsonl"
     digest = json.loads(records.read_text())["bundles"][0]
     stored = ImmutableEvidenceStore(service.promotion_root).get(digest)
@@ -362,7 +375,7 @@ def test_promote_project_collects_abi_and_differential_atomically(monkeypatch, t
 
     def complete(context, build, symbol, commands, original, staging):
         bundle_calls.append(symbol.name)
-        return _complete_proof(symbol.name)
+        return _complete_proof(f"{symbol.address}:{symbol.name}")
 
     monkeypatch.setattr(service, "_commands", commands)
     monkeypatch.setattr(service, "_complete_bundle", complete)
@@ -401,17 +414,17 @@ def test_status_revalidates_current_project_build_and_proofs(monkeypatch, tmp_pa
 def test_current_bundles_revalidates_proof_and_toolchain_identity(monkeypatch, tmp_path):
     service = _FakeService(tmp_path, ("one",))
     context = _context(("one",))
-    proof = _complete_proof("one")
+    proof = _complete_proof("0:one")
     store = ImmutableEvidenceStore(service.promotion_root)
     digest = store.put(proof)
     PromotionJournal(service.promotion_root / "journal.jsonl").append(
-        (proof,), project="demo", candidate="candidate-1", expected_targets=("one",)
+        (proof,), project="demo", candidate="candidate-1", expected_targets=("0:one",)
     )
     seen: list[str] = []
     monkeypatch.setattr("re_agent.promotion.service.revalidate_proof_bundle", lambda bundle: seen.append("proof"))
     monkeypatch.setattr(service, "_verify_bundle_toolchain", lambda bundle: seen.append("toolchain"))
     current = service._current_bundles(context, "candidate-1")
-    assert current["one"].bundle_sha256 == digest
+    assert current["0:one"].bundle_sha256 == digest
     assert seen == ["proof", "toolchain"]
 
 
@@ -422,11 +435,11 @@ def test_stale_historical_stage_is_ignored_and_fresh_same_stage_replaces_it(monk
     def proof(profile):
         return ProofBundle(
             "demo",
-            "one",
+            "0:one",
             "candidate-1",
             (
-                ProofEvidence("compile", "one", {"passed": True, "build": "candidate-1"}),
-                ProofEvidence("abi", "one", {"passed": True, "build": "candidate-1", "profile": profile}),
+                ProofEvidence("compile", "0:one", {"passed": True, "build": "candidate-1"}),
+                ProofEvidence("abi", "0:one", {"passed": True, "build": "candidate-1", "profile": profile}),
             ),
         ).sealed()
 
@@ -436,8 +449,8 @@ def test_stale_historical_stage_is_ignored_and_fresh_same_stage_replaces_it(monk
     store.put(stale)
     store.put(fresh)
     journal = PromotionJournal(service.promotion_root / "journal.jsonl")
-    journal.append((stale,), project="demo", candidate="candidate-1", expected_targets=("one",))
-    journal.append((fresh,), project="demo", candidate="candidate-1", expected_targets=("one",))
+    journal.append((stale,), project="demo", candidate="candidate-1", expected_targets=("0:one",))
+    journal.append((fresh,), project="demo", candidate="candidate-1", expected_targets=("0:one",))
     monkeypatch.setattr("re_agent.promotion.service.revalidate_proof_bundle", lambda bundle: None)
 
     def verify(bundle):
@@ -446,8 +459,8 @@ def test_stale_historical_stage_is_ignored_and_fresh_same_stage_replaces_it(monk
 
     monkeypatch.setattr(service, "_verify_bundle_toolchain", verify)
     current = service._current_bundles(context, "candidate-1")
-    assert current["one"].evidence[-1].payload["profile"] == "fresh-profile"
-    assert sum(item.evidence_type == "abi" for item in current["one"].evidence) == 1
+    assert current["0:one"].evidence[-1].payload["profile"] == "fresh-profile"
+    assert sum(item.evidence_type == "abi" for item in current["0:one"].evidence) == 1
 
 
 def test_failed_active_publication_does_not_derive_promoted_and_preserves_prior_view(monkeypatch, tmp_path):
@@ -463,9 +476,9 @@ def test_failed_active_publication_does_not_derive_promoted_and_preserves_prior_
             VerifiedCommand((capability, "stage1"), "b" * 64),
         ),
     )
-    monkeypatch.setattr(service, "_complete_bundle", lambda *args: _complete_proof("one"))
+    monkeypatch.setattr(service, "_complete_bundle", lambda *args: _complete_proof("0:one"))
     publisher = PromotionViewPublisher(service.promotion_root, auth_key="release-5")
-    prior = derive_project_from_bundles("demo", "candidate-1", ("one",), (_complete_proof("one"),), "prior-batch")
+    prior = derive_project_from_bundles("demo", "candidate-1", ("0:one",), (_complete_proof("0:one"),), "prior-batch")
     publisher.publish(prior)
     prior_pointer = (service.promotion_root / "active.json").read_bytes()
 
@@ -484,27 +497,27 @@ def test_failed_active_publication_does_not_derive_promoted_and_preserves_prior_
 def test_orphan_evidence_is_ignored_until_committed_in_journal(monkeypatch, tmp_path):
     service = _FakeService(tmp_path, ("one",))
     context = _context(("one",))
-    proof = _complete_proof("one")
+    proof = _complete_proof("0:one")
     store = ImmutableEvidenceStore(service.promotion_root)
     store.put(proof)
     monkeypatch.setattr("re_agent.promotion.service.revalidate_proof_bundle", lambda bundle: None)
     monkeypatch.setattr(service, "_verify_bundle_toolchain", lambda bundle: None)
     assert service._current_bundles(context, "candidate-1") == {}
     PromotionJournal(service.promotion_root / "journal.jsonl").append(
-        (proof,), project="demo", candidate="candidate-1", expected_targets=("one",)
+        (proof,), project="demo", candidate="candidate-1", expected_targets=("0:one",)
     )
-    assert service._current_bundles(context, "candidate-1")["one"] == proof
+    assert service._current_bundles(context, "candidate-1")["0:one"] == proof
 
 
 @pytest.mark.parametrize("corruption", ["missing", "corrupt", "hash-invalid"])
 def test_journal_referenced_invalid_bundle_fails_closed(monkeypatch, tmp_path, corruption):
     service = _FakeService(tmp_path, ("one",))
     context = _context(("one",))
-    proof = _proof("one", "abi")
+    proof = _proof("0:one", "abi")
     store = ImmutableEvidenceStore(service.promotion_root)
     digest = store.put(proof)
     PromotionJournal(service.promotion_root / "journal.jsonl").append(
-        (proof,), project="demo", candidate="candidate-1", expected_targets=("one",)
+        (proof,), project="demo", candidate="candidate-1", expected_targets=("0:one",)
     )
     path = service.promotion_root / "bundles" / f"{digest}.json"
     if corruption == "missing":
@@ -532,9 +545,9 @@ def test_journal_batches_do_not_cross_project_or_candidate(monkeypatch, tmp_path
     def variant(project, candidate):
         return ProofBundle(
             project,
-            "one",
+            "0:one",
             candidate,
-            (ProofEvidence("compile", "one", {"passed": True, "build": candidate}),),
+            (ProofEvidence("compile", "0:one", {"passed": True, "build": candidate}),),
         ).sealed()
 
     accepted = variant("demo", "candidate-1")
@@ -546,11 +559,11 @@ def test_journal_batches_do_not_cross_project_or_candidate(monkeypatch, tmp_path
         (other_project, "other", "candidate-1"),
     ):
         store.put(proof)
-        journal.append((proof,), project=project, candidate=candidate, expected_targets=("one",))
+        journal.append((proof,), project=project, candidate=candidate, expected_targets=("0:one",))
     monkeypatch.setattr("re_agent.promotion.service.revalidate_proof_bundle", lambda bundle: None)
     monkeypatch.setattr(service, "_verify_bundle_toolchain", lambda bundle: None)
     current = service._current_bundles(context, "candidate-1")
-    assert current == {"one": accepted}
+    assert current == {"0:one": accepted}
 
 
 def test_adapter_staging_is_external_and_operation_scoped(monkeypatch, tmp_path):
@@ -565,7 +578,7 @@ def test_adapter_staging_is_external_and_operation_scoped(monkeypatch, tmp_path)
 
     def stage_bundle(context, build, symbol, capability, proof_type, commands, original, staging):
         captured.append(staging)
-        return _proof(symbol.name, proof_type)
+        return _proof(f"{symbol.address}:{symbol.name}", proof_type)
 
     monkeypatch.setattr(service, "_stage_bundle", stage_bundle)
     service.inspect_abi()

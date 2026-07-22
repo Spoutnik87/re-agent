@@ -1,4 +1,10 @@
-"""Hash-chained, append-only promotion journal."""
+"""Hash-chained, append-only promotion journal.
+
+.. deprecated::
+   The per-file ``_journal_lock`` is kept as a fallback but no longer used
+   by ``append()``.  Callers are expected to hold a ``PromotionLock``
+   (from ``re_agent.promotion.lock``) for the duration of the transaction.
+"""
 
 from __future__ import annotations
 
@@ -103,22 +109,21 @@ class PromotionJournal:
             if bundle.project != project or bundle.candidate != candidate:
                 raise ValueError("batch identity mismatch")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with _journal_lock(self.path):
-            existing = self.records()
-            previous = existing[-1].record_hash if existing else ""
-            record = PromotionBatch(
-                project, candidate, tuple(bundle.bundle_sha256 for bundle in bundles), previous
-            ).sealed()
-            with self.path.open("ab") as stream:
-                stream.write(canonical_json(record.as_dict()))
-                stream.flush()
-                os.fsync(stream.fileno())
-            if os.name != "nt":
-                directory_fd = os.open(self.path.parent, os.O_RDONLY)
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
+        existing = self.records()
+        previous = existing[-1].record_hash if existing else ""
+        record = PromotionBatch(
+            project, candidate, tuple(bundle.bundle_sha256 for bundle in bundles), previous
+        ).sealed()
+        with self.path.open("ab") as stream:
+            stream.write(canonical_json(record.as_dict()))
+            stream.flush()
+            os.fsync(stream.fileno())
+        if os.name != "nt":
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         return record
 
     def records(self) -> tuple[PromotionBatch, ...]:

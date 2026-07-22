@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import Any
 
 _HASH = re.compile(r"^[0-9a-f]{64}$")
+_TARGET = re.compile(r"^\d+:[^:]+$")  # canonical: "address:name"
 
 
 def canonical_json(value: object) -> bytes:
@@ -20,6 +21,44 @@ def canonical_json(value: object) -> bytes:
 
 def sha256(value: object) -> str:
     return hashlib.sha256(canonical_json(value)).hexdigest()
+
+
+def canonical_target(address: int, name: str) -> str:
+    """Return the canonical target identity string ``"{address}:{name}"``."""
+    if not isinstance(address, int) or address < 0 or address > 0xFFFFFFFFFFFFFFFF:
+        raise ValueError(f"invalid target address: {address!r}")
+    if not name or not isinstance(name, str):
+        raise ValueError(f"invalid target name: {name!r}")
+    result = f"{address}:{name}"
+    if not _TARGET.fullmatch(result):
+        raise ValueError("target identity must contain address separator")
+    return result
+
+
+def parse_target(target: str) -> tuple[int, str]:
+    """Parse canonical target identity into ``(address, name)``.
+
+    Raises ``ValueError`` if the target is a legacy name-only string.
+    """
+    parts = target.split(":", 1)
+    if len(parts) != 2:
+        raise ValueError(f"legacy name-only target is not supported: {target!r}")
+    try:
+        address = int(parts[0])
+    except ValueError as err:
+        raise ValueError(f"legacy name-only target is not supported: {target!r}") from err
+    if not parts[1]:
+        raise ValueError(f"invalid target name (empty) in: {target!r}")
+    return address, parts[1]
+
+
+def classify_target(target: str, expected_address: int | None = None, expected_name: str | None = None) -> None:
+    """Validate target format; raise ``ValueError`` on legacy or mismatch."""
+    address, name = parse_target(target)
+    if expected_address is not None and address != expected_address:
+        raise ValueError(f"target address mismatch: expected {expected_address}, got {address}")
+    if expected_name is not None and name != expected_name:
+        raise ValueError(f"target name mismatch: expected {expected_name!r}, got {name!r}")
 
 
 class PromotionState(StrEnum):
@@ -104,6 +143,7 @@ class ProofBundle:
     def verify(self) -> None:
         if not self.project or not self.target or not self.candidate or not self.evidence:
             raise ValueError("incomplete proof bundle")
+        parse_target(self.target)  # reject legacy name-only targets
         for item in self.evidence:
             item.verify()
         if len({item.evidence_sha256 for item in self.evidence}) != len(self.evidence):
@@ -128,6 +168,14 @@ class TargetState:
     bundle_sha256: str = ""
     proof_types: tuple[str, ...] = ()
     build_identity: str = ""
+
+    @property
+    def target_address(self) -> int:
+        return parse_target(self.target)[0]
+
+    @property
+    def target_name(self) -> str:
+        return parse_target(self.target)[1]
 
 
 @dataclass(frozen=True, slots=True)

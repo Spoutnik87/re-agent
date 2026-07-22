@@ -136,6 +136,12 @@ def project(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr("re_agent.cli.cmd_build._project_recipe", lambda *_args: (recipe, compiler))
     monkeypatch.setattr("re_agent.toolchain.activation.resolve_capability", lambda **kwargs: (compiler,))
     monkeypatch.setattr("re_agent.llm.registry.create_provider", lambda _config: provider)
+    # _load_stable_config reads the file directly; stub it in tests to
+    # bypass real YAML parsing and return the fixture config.
+    monkeypatch.setattr(
+        "re_agent.cli.cmd_build._load_stable_config",
+        lambda _path, verified=False: (config, "d" * 64),
+    )
     return SimpleNamespace(
         root=root,
         config_path=config_path,

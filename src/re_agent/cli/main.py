@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -176,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             return cmd_run(args)
         except (OSError, RuntimeError, ValueError) as exc:
-            print(f"Run rejected: {exc}")
+            print(f"Run rejected: {exc}", file=sys.stderr)
             return 2
 
     if args.command == "pipeline":

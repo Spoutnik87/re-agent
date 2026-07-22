@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from re_agent.project import load_verified_project
-from re_agent.promotion.models import ProjectState, PromotionState
+from re_agent.promotion.models import ProjectState, PromotionState, canonical_target
 from re_agent.promotion.service import PromotionResult, PromotionService
 
 
@@ -18,10 +18,10 @@ def _address_target(project_root: Path, address: str) -> str:
     except ValueError as exc:
         raise ValueError(f"invalid address: {address}") from exc
     context = load_verified_project(project_root)
-    matches = [item.name for item in context.verified_abi_manifest.value.symbols if item.address == value]
+    matches = [item for item in context.verified_abi_manifest.value.symbols if item.address == value]
     if len(matches) != 1:
         raise ValueError(f"unknown or ambiguous promotion address: {address}")
-    return matches[0]
+    return canonical_target(matches[0].address, matches[0].name)
 
 
 def _promotion_root(project_root: Path, requested: str | None) -> Path:

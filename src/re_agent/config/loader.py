@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import typing
@@ -430,3 +431,41 @@ def load_config(
     if cli_overrides:
         raw = _apply_cli_overrides(raw, cli_overrides)
     return _build_config(raw, yaml_path, verified_contract_override=verified_contract_override)
+
+
+def load_config_bytes(data: bytes, path: Path, **kwargs: Any) -> tuple[ReAgentConfig, str]:
+    """Load ``ReAgentConfig`` from raw byte content and return ``(config, sha256)``.
+
+    Parameters
+    ----------
+    data:
+        Raw bytes of the YAML config file.
+    path:
+        Path to the original config file (used as base dir for relative paths).
+    **kwargs:
+        Forwarded to ``_build_config``; supports ``cli_overrides`` and
+        ``verified_contract_override``.
+
+    Returns
+    -------
+    tuple[ReAgentConfig, str]
+        The parsed config and its SHA-256 hex digest.
+    """
+    sha256 = hashlib.sha256(data).hexdigest()
+    import yaml as _yaml
+
+    raw = _yaml.safe_load(data)
+    if raw is None:
+        raw = {}
+    elif not isinstance(raw, dict):
+        raise ValueError(f"Expected YAML mapping, got {type(raw).__name__}")
+    raw = _apply_env_overrides(raw)
+    cli_overrides = kwargs.get("cli_overrides")
+    if cli_overrides:
+        raw = _apply_cli_overrides(raw, cli_overrides)
+    config = _build_config(
+        raw,
+        path,
+        verified_contract_override=kwargs.get("verified_contract_override"),
+    )
+    return config, sha256

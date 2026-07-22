@@ -7,12 +7,12 @@ import json
 import pytest
 
 from re_agent.promotion.journal import PromotionJournal
-from re_agent.promotion.models import PromotionState, ProofBundle, ProofEvidence
+from re_agent.promotion.models import PromotionState, ProofBundle, ProofEvidence, canonical_target, parse_target
 from re_agent.promotion.state import derive_project_from_bundles, derive_project_state, derive_target_state
 from re_agent.promotion.store import ImmutableEvidenceStore, PromotionViewPublisher
 
 
-def bundle(target: str = "target", *, proof: str = "abi", passed: bool = True) -> ProofBundle:
+def bundle(target: str = "0:target", *, proof: str = "abi", passed: bool = True) -> ProofBundle:
     return ProofBundle(
         "demo",
         target,
@@ -24,7 +24,7 @@ def bundle(target: str = "target", *, proof: str = "abi", passed: bool = True) -
     ).sealed()
 
 
-def complete_bundle(target: str = "target") -> ProofBundle:
+def complete_bundle(target: str = "0:target") -> ProofBundle:
     return ProofBundle(
         "demo",
         target,
@@ -63,7 +63,7 @@ def test_tampered_bundle_is_rejected_as_invalid(tmp_path):
 
 def test_hash_chain_corruption_is_rejected(tmp_path):
     journal = PromotionJournal(tmp_path / "journal.jsonl")
-    journal.append((bundle(),), project="demo", candidate="candidate-1", expected_targets=("target",))
+    journal.append((bundle(),), project="demo", candidate="candidate-1", expected_targets=("0:target",))
     path = tmp_path / "journal.jsonl"
     raw = json.loads(path.read_text())
     raw["bundles"] = ["tampered"]
@@ -75,8 +75,8 @@ def test_hash_chain_corruption_is_rejected(tmp_path):
 
 @pytest.mark.parametrize("proof", ["compile", "abi", "differential"])
 def test_compile_only_abi_only_and_diff_only_never_promote(proof):
-    evidence = (ProofEvidence(proof, "target", {"passed": True, "build": "candidate-1"}),)
-    state = derive_target_state(ProofBundle("demo", "target", "candidate-1", evidence).sealed())
+    evidence = (ProofEvidence(proof, "0:target", {"passed": True, "build": "candidate-1"}),)
+    state = derive_target_state(ProofBundle("demo", "0:target", "candidate-1", evidence).sealed())
     assert state.state is not PromotionState.PROMOTED
     assert (
         derive_project_state("demo", "candidate-1", (state,), batch_hash="batch").state is not PromotionState.PROMOTED
@@ -86,11 +86,11 @@ def test_compile_only_abi_only_and_diff_only_never_promote(proof):
 def test_lone_adapter_stage_never_counts_as_complete_proof():
     proof = ProofBundle(
         "demo",
-        "target",
+        "0:target",
         "candidate-1",
         (
-            ProofEvidence("compile", "target", {"passed": True, "build": "candidate-1"}),
-            ProofEvidence("abi", "target", {"passed": True, "build": "candidate-1", "stage": "0"}),
+            ProofEvidence("compile", "0:target", {"passed": True, "build": "candidate-1"}),
+            ProofEvidence("abi", "0:target", {"passed": True, "build": "candidate-1", "stage": "0"}),
         ),
     ).sealed()
     state = derive_target_state(proof)
@@ -101,11 +101,11 @@ def test_lone_adapter_stage_never_counts_as_complete_proof():
 def test_differential_only_is_not_project_promoted_without_batch():
     proof = ProofBundle(
         "demo",
-        "target",
+        "0:target",
         "candidate-1",
-        (ProofEvidence("differential", "target", {"passed": True, "build": "candidate-1"}),),
+        (ProofEvidence("differential", "0:target", {"passed": True, "build": "candidate-1"}),),
     ).sealed()
-    state = derive_project_from_bundles("demo", "candidate-1", ("target",), (proof,))
+    state = derive_project_from_bundles("demo", "candidate-1", ("0:target",), (proof,))
     assert state.state is PromotionState.INVALID
     assert state.state is not PromotionState.PROMOTED
 
@@ -115,20 +115,20 @@ def test_stale_identity_and_missing_target_are_invalid():
     target = derive_target_state(proof)
     stale = type(target)(target.project, target.target, "other-candidate", target.state, target.bundle_sha256)
     assert derive_project_state("demo", "candidate-1", (stale,)).state is PromotionState.INVALID
-    assert derive_project_from_bundles("demo", "candidate-1", ("target",), (proof,)).state is PromotionState.ABI_PASS
+    assert derive_project_from_bundles("demo", "candidate-1", ("0:target",), (proof,)).state is PromotionState.ABI_PASS
     assert (
-        derive_project_from_bundles("demo", "candidate-1", ("target", "missing"), (proof,)).state
+        derive_project_from_bundles("demo", "candidate-1", ("0:target", "1:missing"), (proof,)).state
         is PromotionState.INVALID
     )
     assert (
-        derive_project_from_bundles("demo", "candidate-1", ("target",), (proof,), "batch").state
+        derive_project_from_bundles("demo", "candidate-1", ("0:target",), (proof,), "batch").state
         is PromotionState.ABI_PASS
     )
     assert stale.candidate != "candidate-1"
 
 
 def test_promotion_view_publishes_active_summary(tmp_path):
-    state = derive_project_from_bundles("demo", "candidate-1", ("target",), (complete_bundle("target"),), "batch")
+    state = derive_project_from_bundles("demo", "candidate-1", ("0:target",), (complete_bundle("0:target"),), "batch")
     assert state.state is PromotionState.PROMOTED
     publisher = PromotionViewPublisher(tmp_path / "promotion")
     digest = publisher.publish(state)
@@ -141,7 +141,7 @@ def test_promotion_view_publishes_active_summary(tmp_path):
 
 def test_active_pointer_rejects_tampered_existing_summary(tmp_path):
     publisher = PromotionViewPublisher(tmp_path / "promotion", auth_key="release-5")
-    state = derive_project_from_bundles("demo", "candidate-1", ("target",), (complete_bundle("target"),), "batch")
+    state = derive_project_from_bundles("demo", "candidate-1", ("0:target",), (complete_bundle("0:target"),), "batch")
     digest = publisher.publish(state)
     summary = tmp_path / "promotion" / "summaries" / f"{digest}.json"
     raw = json.loads(summary.read_text())
@@ -154,11 +154,13 @@ def test_active_pointer_rejects_tampered_existing_summary(tmp_path):
 
 def test_active_pointer_preserves_previous_value_when_publish_fails(monkeypatch, tmp_path):
     publisher = PromotionViewPublisher(tmp_path / "promotion", auth_key="release-5")
-    first = derive_project_from_bundles("demo", "candidate-1", ("target",), (complete_bundle("target"),), "batch-1")
+    first = derive_project_from_bundles("demo", "candidate-1", ("0:target",), (complete_bundle("0:target"),), "batch-1")
     publisher.publish(first)
     pointer = tmp_path / "promotion" / "active.json"
     previous = pointer.read_bytes()
-    second = derive_project_from_bundles("demo", "candidate-1", ("target",), (complete_bundle("target"),), "batch-2")
+    second = derive_project_from_bundles(
+        "demo", "candidate-1", ("0:target",), (complete_bundle("0:target"),), "batch-2"
+    )
     monkeypatch.setattr(publisher, "_publish_summary", lambda *args: (_ for _ in ()).throw(RuntimeError("disk full")))
 
     with pytest.raises(RuntimeError, match="disk full"):
@@ -168,10 +170,40 @@ def test_active_pointer_preserves_previous_value_when_publish_fails(monkeypatch,
 
 def test_locked_active_pointer_rejects_replacement(tmp_path):
     publisher = PromotionViewPublisher(tmp_path / "promotion")
-    state = derive_project_from_bundles("demo", "candidate-1", ("target",), (complete_bundle("target"),), "batch")
+    state = derive_project_from_bundles("demo", "candidate-1", ("0:target",), (complete_bundle("0:target"),), "batch")
     publisher.publish(state)
     lock = tmp_path / "promotion" / "active.json.lock"
     lock.write_text("held")
 
     with pytest.raises(ValueError, match="already being published"):
         publisher.publish(state)
+
+
+def test_legacy_name_only_target_is_rejected():
+    # Bare name without address separator should be rejected
+    with pytest.raises(ValueError, match="legacy name-only target"):
+        ProofBundle(
+            "demo",
+            "target",
+            "candidate-1",
+            (ProofEvidence("compile", "target", {"passed": True, "build": "candidate-1"}),),
+        ).verify()
+
+
+def test_non_canonical_target_is_rejected():
+    # Non-numeric prefix before colon should be rejected
+    with pytest.raises(ValueError, match="legacy name-only target"):
+        ProofBundle(
+            "demo",
+            "bad:target",
+            "candidate-1",
+            (ProofEvidence("compile", "bad:target", {"passed": True, "build": "candidate-1"}),),
+        ).verify()
+
+
+def test_canonical_target_round_trip():
+    canonical = canonical_target(4198720, "sub_4010c0")
+    assert canonical == "4198720:sub_4010c0"
+    addr, name = parse_target(canonical)
+    assert addr == 4198720
+    assert name == "sub_4010c0"

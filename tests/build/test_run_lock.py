@@ -24,9 +24,12 @@ def _start_holder(lock_path: Path, metadata: dict[str, Any] | None = None) -> su
     script = """
 import json
 import sys
+from pathlib import Path
 from re_agent.build import RunLock
 
-lock = RunLock(sys.argv[1], metadata=json.loads(sys.argv[2]))
+lock_path = Path(sys.argv[1])
+lock_path.mkdir(parents=True, exist_ok=True)
+lock = RunLock(lock_path, metadata=json.loads(sys.argv[2]))
 lock.acquire()
 print("ready", flush=True)
 try:
@@ -71,6 +74,7 @@ def _stop_holder(process: subprocess.Popen[str]) -> None:
 
 def test_acquire_release_and_context_lifecycle(tmp_path: Path) -> None:
     run_directory = tmp_path / "run"
+    run_directory.mkdir()
     lock = RunLock(run_directory, metadata={"run_id": "test-run"})
 
     assert not lock.locked
@@ -88,6 +92,7 @@ def test_acquire_release_and_context_lifecycle(tmp_path: Path) -> None:
 
 def test_concurrent_same_run_is_rejected_and_release_makes_lock_available(tmp_path: Path) -> None:
     lock_path = tmp_path / "run"
+    lock_path.mkdir()
     holder = _start_holder(lock_path)
     try:
         contender = RunLock(lock_path)
@@ -125,6 +130,7 @@ def test_terminated_holder_releases_retained_lock_for_new_process(tmp_path: Path
 
 def test_diagnostic_metadata_never_grants_force_break(tmp_path: Path) -> None:
     lock_path = tmp_path / "run"
+    lock_path.mkdir()
     metadata = {"force": True, "owner": "diagnostic-only"}
     holder = _start_holder(lock_path, metadata)
     try:

@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -15,6 +14,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from re_agent.build._platform import _is_link
+from re_agent.build.evidence import validate_run_id
 from re_agent.config.loader import load_config
 
 
@@ -32,6 +33,18 @@ def _config_identity(path: Path) -> str:
         return _sha256(path)
     except OSError as exc:
         raise ValueError(f"config identity cannot be read: {path}") from exc
+
+
+def _load_stable_config(path: Path, verified: bool = False) -> tuple[Any, str]:
+    """Read config bytes, optionally re-read to detect mutation, return ``(config, sha256)``."""
+    data = path.read_bytes()
+    if verified:
+        current = path.read_bytes()
+        if data != current:
+            raise ValueError("configuration was modified after read")
+    from re_agent.config.loader import load_config_bytes
+
+    return load_config_bytes(data, path)
 
 
 def _value_identity(value: object) -> str:
@@ -71,39 +84,24 @@ def _atomic_create_json(path: Path, value: object) -> None:
 def _copy_atomic(source: Path, destination: Path) -> None:
     _require_regular_contained_file(source, source.parent)
     _reject_path_components(destination.parent)
-    if destination.is_symlink() or _is_reparse_point(destination):
+    if _is_link(destination):
         raise ValueError(f"refusing to overwrite linked destination: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     _reject_path_components(destination.parent)
     _require_regular_contained_file(source, source.parent)
     temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
     shutil.copyfile(source, temporary)
-    if destination.is_symlink() or _is_reparse_point(destination):
+    if _is_link(destination):
         temporary.unlink(missing_ok=True)
         raise ValueError(f"refusing to overwrite linked destination: {destination}")
     temporary.replace(destination)
 
 
-def _is_reparse_point(path: Path) -> bool:
-    try:
-        attributes = getattr(path.lstat(), "st_file_attributes", 0)
-    except FileNotFoundError:
-        return False
-    except OSError as exc:
-        raise ValueError(f"cannot inspect path: {path}") from exc
-    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
-
-
 def _reject_path_components(path: Path) -> None:
     """Reject symlink/reparse components before any path is followed."""
-    absolute = path.absolute()
-    current = Path(absolute.anchor)
-    for component in absolute.parts[1:]:
-        current /= component
-        if not current.exists() and not current.is_symlink():
-            continue
-        if current.is_symlink() or _is_reparse_point(current):
-            raise ValueError(f"path contains a symlink or reparse point: {current}")
+    from re_agent.build._platform import _reject_linked_components
+
+    _reject_linked_components(path)
 
 
 def _require_regular_contained_file(path: Path, root: Path) -> Path:
@@ -114,7 +112,7 @@ def _require_regular_contained_file(path: Path, root: Path) -> Path:
     _reject_path_components(path_absolute)
     if not path_absolute.is_relative_to(root_absolute):
         raise ValueError(f"path escapes expected root: {path}")
-    if path_absolute.is_symlink() or _is_reparse_point(path_absolute) or not path_absolute.is_file():
+    if _is_link(path_absolute) or not path_absolute.is_file():
         raise ValueError(f"path is not a regular file: {path}")
     try:
         resolved_root = root_absolute.resolve(strict=True)
@@ -737,18 +735,37 @@ def _cmd_build_project_unlocked(
 def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: Any) -> int:
     """Run project orchestration while holding the OS-backed run lock."""
     from re_agent.build.run_lock import RunLock
+    from re_agent.project.context import load_verified_project
 
     run_id = getattr(args, "run_id", None) or f"run-{uuid.uuid4().hex}"
-    if not run_id.replace("-", "").replace("_", "").replace(".", "").isalnum():
-        print("Error: --run-id must be a safe path component", file=sys.stderr)
+    try:
+        validate_run_id(run_id)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 2
     try:
-        # RunLock creates its parent directories, so reject linked build roots
-        # before it can create run metadata outside the owned project.
         build_root = project_context.root / "build"
         _reject_path_components(build_root)
+        if _is_link(build_root):
+            print("Error: build root is a link", file=sys.stderr)
+            return 2
         run_root = build_root / "runs" / run_id
-        with RunLock(run_root, metadata={"run_id": run_id}):
+        # Ensure build root and runs parent exist (but not run_root itself,
+        # which signals an existing run).
+        build_root.mkdir(parents=True, exist_ok=True)
+        (build_root / "runs").mkdir(parents=False, exist_ok=True)
+        run_root.mkdir(parents=False, exist_ok=True)
+        if _is_link(run_root):
+            print("Error: run root is a link", file=sys.stderr)
+            return 2
+        with RunLock(run_root, metadata={"run_id": run_id}) as lock:
+            # Reload project identity under lock
+            project_context = load_verified_project(project_context.root)
+            # Reload config via verified double-read
+            config, config_sha256 = _load_stable_config(Path(args.config), verified=True)
+            config.build.input.ghidra_exports = str(project_context.snapshot_root)
+            config.contracts.verified_manifest = project_context.verified_abi_manifest
+            lock.revalidate()
             return _cmd_build_project_unlocked(
                 args,
                 project_context,

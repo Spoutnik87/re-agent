@@ -15,6 +15,8 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from re_agent.build._platform import _is_link
+
 if os.name == "nt":  # pragma: no cover - platform dependent import
     try:
         import msvcrt
@@ -36,6 +38,11 @@ class RunLock:
 
     ``lock_name`` is not used as a source of ownership truth.  The OS-level
     advisory/mandatory lock on the retained file is the source of truth.
+
+    The caller **must** create ``run_directory`` before calling ``acquire()``.
+    ``acquire()`` validates the directory is a real directory (not a symlink
+    or reparse point) and retains a file descriptor to it for later
+    ``revalidate()`` checks.
     """
 
     def __init__(
@@ -51,6 +58,7 @@ class RunLock:
         self.lock_path = self.run_directory / lock_name
         self._metadata = dict(metadata or {})
         self._file: Any = None
+        self._run_dir_fd: int | None = None
 
     @property
     def locked(self) -> bool:
@@ -59,7 +67,12 @@ class RunLock:
         return self._file is not None
 
     def acquire(self) -> RunLock:
-        """Acquire the lock, raising ``RunLockError`` if it is unavailable."""
+        """Acquire the lock, raising ``RunLockError`` if it is unavailable.
+
+        The caller is responsible for creating ``run_directory`` beforehand.
+        This method validates the directory is a real, non-linked directory
+        and retains a file descriptor to defend against TOCTOU substitution.
+        """
         if self.locked:
             raise RunLockError("run lock is already acquired by this instance")
         if os.name == "nt":
@@ -68,15 +81,46 @@ class RunLock:
         elif fcntl is None:
             raise RunLockError("OS-backed run locks are unsupported on this platform")
 
+        if not self.run_directory.is_dir():
+            raise RunLockError(f"run directory does not exist: {self.run_directory}")
+        if _is_link(self.run_directory):
+            raise RunLockError(f"run directory is a link: {self.run_directory}")
+
         file: Any | None = None
         try:
-            self.run_directory.mkdir(parents=True, exist_ok=True)
-            file = self.lock_path.open("a+b")
+            if os.name == "nt":
+                # Windows cannot retain an fd on a directory; reparse check
+                # via lstat is sufficient at acquire time.
+                self._run_dir_fd = None
+                file = open(self.lock_path, "a+b")  # noqa: SIM115 - fd retained beyond scope
+            else:
+                # POSIX: open with O_NOFOLLOW + O_DIRECTORY to retain the
+                # directory identity; open lock file relative to it.
+                self._run_dir_fd = os.open(
+                    self.run_directory,
+                    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+                )
+                lock_fd = os.open(
+                    ".run.lock",
+                    os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=self._run_dir_fd,
+                )
+                file = os.fdopen(lock_fd, "a+b")
+
             if file.seek(0, os.SEEK_END) == 0:
                 file.write(b"\0")
                 file.flush()
             file.seek(0)
             self._lock_file(file)
+
+            # Verify lock file identity matches stat expectation.
+            lock_fd = file.fileno()
+            fd_stat = os.fstat(lock_fd)
+            path_stat = self.lock_path.stat()
+            if (fd_stat.st_dev, fd_stat.st_ino) != (path_stat.st_dev, path_stat.st_ino):
+                file.close()
+                raise RunLockError("lock file descriptor identity mismatch")
+
             self._file = file
             self._write_metadata(file)
             return self
@@ -87,12 +131,37 @@ class RunLock:
                 file.close()
             raise RunLockError(f"unable to acquire run lock {self.lock_path}") from exc
 
+    def revalidate(self) -> RunLock:
+        """Verify retained descriptors still refer to the same directory and
+        lock file.  Raises ``RunLockError`` on mismatch.
+
+        Returns ``self`` for chaining.
+        """
+        if self._run_dir_fd is not None:
+            try:
+                fd_stat = os.fstat(self._run_dir_fd)
+                current = self.run_directory.stat()
+                if (fd_stat.st_dev, fd_stat.st_ino) != (current.st_dev, current.st_ino):
+                    raise RunLockError("run directory identity changed since lock acquisition")
+            except OSError as exc:
+                raise RunLockError(f"cannot revalidate run directory: {exc}") from exc
+        if self._file is not None:
+            try:
+                fd_stat = os.fstat(self._file.fileno())
+                current = self.lock_path.stat()
+                if (fd_stat.st_dev, fd_stat.st_ino) != (current.st_dev, current.st_ino):
+                    raise RunLockError("lock file identity changed since lock acquisition")
+            except OSError as exc:
+                raise RunLockError(f"cannot revalidate lock file: {exc}") from exc
+        return self
+
     def release(self) -> None:
         """Release the OS lock and close its descriptor."""
         file = self._file
         if file is None:
             return
         self._file = None
+        self._run_dir_fd = None
         try:
             self._unlock_file(file)
         finally:

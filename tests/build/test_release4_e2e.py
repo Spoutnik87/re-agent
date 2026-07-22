@@ -156,6 +156,10 @@ def project(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr("re_agent.cli.cmd_build._project_recipe", lambda *_args: (recipe, command))
     monkeypatch.setattr("re_agent.toolchain.activation.resolve_capability", lambda **kwargs: (command,))
     monkeypatch.setattr(
+        "re_agent.cli.cmd_build._load_stable_config",
+        lambda _path, verified=False: (config, "d" * 64),
+    )
+    monkeypatch.setattr(
         "re_agent.build.transform.manifest_bound_transform.run_manifest_bound_transform", fake_transform
     )
     real_run_recipe = __import__("re_agent.build.recipe", fromlist=["run_recipe"]).run_recipe

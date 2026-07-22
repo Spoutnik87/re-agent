@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
+from re_agent.build._platform import _reject_linked_components
+
 
 def _inside(root: Path, child: Path) -> bool:
     try:
@@ -136,6 +138,10 @@ class BuildRecipe:
         return self.output
 
     def validate_paths(self, staging: Path) -> tuple[Path, Path]:
+        # Link detection BEFORE resolution (TOCTOU barrier).
+        _reject_linked_components(staging)
+        _reject_linked_components(staging / PurePosixPath(self.staging_root))
+
         if staging.is_symlink() or not staging.is_dir():
             raise ValueError("staging root must be an existing real directory")
         root = (staging / PurePosixPath(self.staging_root)).resolve()
@@ -143,6 +149,11 @@ class BuildRecipe:
             raise ValueError("recipe staging_root must be an existing real directory")
         cwd = (root / PurePosixPath(self.cwd)).resolve()
         output = (root / PurePosixPath(self.output)).resolve()
+
+        # Containment assertion AFTER resolution.
+        if not root.is_relative_to(staging.resolve()):
+            raise ValueError("recipe staging_root escapes staging parent")
+
         if not _inside(root, cwd) or not _inside(root, output):
             raise ValueError("recipe path escapes staging root")
         return cwd, output
