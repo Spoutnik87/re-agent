@@ -742,8 +742,12 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
     if not run_id.replace("-", "").replace("_", "").replace(".", "").isalnum():
         print("Error: --run-id must be a safe path component", file=sys.stderr)
         return 2
-    run_root = project_context.root / "build" / "runs" / run_id
     try:
+        # RunLock creates its parent directories, so reject linked build roots
+        # before it can create run metadata outside the owned project.
+        build_root = project_context.root / "build"
+        _reject_path_components(build_root)
+        run_root = build_root / "runs" / run_id
         with RunLock(run_root, metadata={"run_id": run_id}):
             return _cmd_build_project_unlocked(
                 args,
