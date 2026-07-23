@@ -270,6 +270,11 @@ class PromotionService:
         )
         if sha256_file(artifact_path) != publication.artifact_sha256:
             raise ValueError("published artifact hash mismatch")
+        if evidence.artifact_sha256 != publication.artifact_sha256:
+            raise ValueError(
+                f"evidence artifact digest {evidence.artifact_sha256} does not match "
+                f"publication artifact digest {publication.artifact_sha256}"
+            )
         for symbol in context.verified_abi_manifest.value.symbols:
             self._verify_checkpoint(context, publication.directory, evidence, symbol)
         if evidence.schema_version >= 2:

@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import tempfile
 from collections.abc import Iterator
@@ -64,10 +65,32 @@ class ImmutableEvidenceStore:
         return checked.bundle_sha256
 
     def get(self, bundle_hash: str) -> ProofBundle:
-        raw = json.loads((self.root / "bundles" / f"{bundle_hash}.json").read_bytes())
+        # 1. Validate digest format
+        if not re.fullmatch(r"^[0-9a-f]{64}$", bundle_hash):
+            raise ValueError(f"invalid bundle hash: {bundle_hash!r}")
+
+        # 2. Construct path and validate containment
+        resolved = (self.root / "bundles" / f"{bundle_hash}.json").resolve()
+        bundles_root = (self.root / "bundles").resolve()
+        if not resolved.is_relative_to(bundles_root):
+            raise ValueError("bundle path escapes store")
+
+        # 3. Reject linked components
+        from re_agent.build._platform import _reject_linked_components as _reject
+
+        _reject(resolved)
+
+        # 4. Read and parse
+        raw_bytes = resolved.read_bytes()
+        raw = json.loads(raw_bytes)
         evidence = tuple(_evidence(item) for item in raw["evidence"])
         bundle = ProofBundle(raw["project"], raw["target"], raw["candidate"], evidence, raw["bundle_sha256"])
         bundle.verify()
+
+        # 5. Cross-check all digest identities
+        if bundle.bundle_sha256 != bundle_hash:
+            raise ValueError(f"bundle digest mismatch: requested {bundle_hash}, found {bundle.bundle_sha256}")
+
         return bundle
 
 

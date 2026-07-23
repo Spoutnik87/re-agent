@@ -161,6 +161,9 @@ class RunLock:
         if file is None:
             return
         self._file = None
+        if self._run_dir_fd is not None:
+            with suppress(OSError):
+                os.close(self._run_dir_fd)
         self._run_dir_fd = None
         try:
             self._unlock_file(file)

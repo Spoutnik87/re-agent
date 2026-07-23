@@ -163,8 +163,9 @@ def _project_recipe(project_root: Path, profile_raw: str | None, staging: Path) 
         timeout_seconds=raw.get("timeout_seconds", 60.0),
         env=tuple(sorted(env.items())),
     )
-    (staging / recipe.staging_root / recipe.cwd).mkdir(parents=True, exist_ok=True)
+    # Validate paths before any mkdir — linked staging_root can redirect creation
     recipe.validate_paths(staging)
+    (staging / recipe.staging_root / recipe.cwd).mkdir(parents=True, exist_ok=True)
     return recipe, link_command
 
 
@@ -749,11 +750,14 @@ def _cmd_build_project(args: argparse.Namespace, project_context: Any, config: A
         if _is_link(build_root):
             print("Error: build root is a link", file=sys.stderr)
             return 2
+        # Reject linked build/runs before any directory creation
+        runs_parent = build_root / "runs"
+        if _is_link(runs_parent):
+            print("Error: build runs parent is a link", file=sys.stderr)
+            return 2
         run_root = build_root / "runs" / run_id
-        # Ensure build root and runs parent exist (but not run_root itself,
-        # which signals an existing run).
         build_root.mkdir(parents=True, exist_ok=True)
-        (build_root / "runs").mkdir(parents=False, exist_ok=True)
+        runs_parent.mkdir(parents=False, exist_ok=True)
         run_root.mkdir(parents=False, exist_ok=True)
         if _is_link(run_root):
             print("Error: run root is a link", file=sys.stderr)
