@@ -29,7 +29,7 @@ def _is_link(path: Path) -> bool:
             if attributes & reparse_flag:
                 return True
         return False
-    except (FileNotFoundError, OSError):
+    except FileNotFoundError, OSError:
         return False
 
 

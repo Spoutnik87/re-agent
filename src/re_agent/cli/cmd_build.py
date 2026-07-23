@@ -381,7 +381,7 @@ def _target_checkpoint_valid(
             and transform.generated_sha256 == _sha256(source)
             and transform.object_sha256 == _sha256(object_path)
         )
-    except (AttributeError, OSError, UnicodeDecodeError, ValueError):
+    except AttributeError, OSError, UnicodeDecodeError, ValueError:
         return False
 
 
@@ -514,7 +514,7 @@ def _cmd_build_project_unlocked(
                         TargetCheckpoint(**raw) for raw in json.loads(checkpoint_file.read_text(encoding="utf-8"))
                     )
                 }
-            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            except OSError, TypeError, ValueError, json.JSONDecodeError:
                 existing = {}
         if phase == "transform":
             for index, symbol in enumerate(sorted(manifest.symbols, key=lambda item: (item.address, item.name))):

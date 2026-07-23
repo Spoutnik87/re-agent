@@ -191,7 +191,7 @@ def test_v2_evidence_path_failures_happen_before_adapter_invocation(monkeypatch,
             symlink = transform_path.parent / "symlink.json"
             try:
                 os.symlink(transform_path, symlink)
-            except (OSError, NotImplementedError):
+            except OSError, NotImplementedError:
                 pytest.skip("symlink creation is unavailable")
             bad_checkpoint = replace(checkpoint, transform_evidence_path="transforms/symlink.json")
         bad_evidence = replace(load_evidence(evidence_path), targets=(bad_checkpoint,)).with_hash()

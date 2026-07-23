@@ -9,7 +9,7 @@ not supported; all build and promotion commands require an owned project root.
 pip install re-agent
 ```
 
-Python 3.11+ is required. Configure an RE backend and an LLM provider for
+Python 3.14+ is required. Configure an RE backend and an LLM provider for
 reverse operations.
 
 ## 1. Create an owned project

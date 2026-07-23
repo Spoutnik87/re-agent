@@ -70,7 +70,7 @@ def _reader(stream: BinaryIO, result: list[bytes], limit: int) -> None:
                 break
             if len(kept) < limit:
                 kept.extend(chunk[: limit - len(kept)])
-    except (OSError, ValueError):
+    except OSError, ValueError:
         pass
     result.append(bytes(kept))
 

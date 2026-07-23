@@ -150,12 +150,12 @@ def _coerce_field(value: Any, field_type: Any) -> Any:
     if field_type is int and not isinstance(value, int):
         try:
             return int(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return value
     if field_type is float and not isinstance(value, int | float):
         try:
             return float(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return value
     if field_type is bool and not isinstance(value, bool):
         if isinstance(value, str):

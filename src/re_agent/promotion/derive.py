@@ -31,7 +31,7 @@ def derive_target_state(bundle: ProofBundle) -> TargetState:
     """Derive one target without allowing proof types or builds to be mixed."""
     try:
         result = _passed_proofs(bundle)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         result = None
     if result is None:
         return TargetState(

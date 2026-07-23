@@ -39,7 +39,7 @@ def _safe_bool(value: str, default: bool) -> bool:
         return default
     try:
         return bool(int(stripped))
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         logger.warning("Invalid bool value in CSV: %r, using default %s", value, default)
         return default
 

@@ -36,7 +36,7 @@ class FunctionStateStore:
             return {}
         try:
             raw: dict[str, Any] = json.loads(self.path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             return {}
         out: dict[str, FunctionRecord] = {}
         for addr, data in raw.items():
