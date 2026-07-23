@@ -11,7 +11,7 @@ from typing import Any, BinaryIO, ClassVar, cast
 
 if sys.platform == "win32":
     import ctypes
-    import msvcrt as _msvcrt_module
+    import msvcrt as _msvcrt_module  # noqa: F401 — accessed via globals() in _windows_open_non_reparse
     from ctypes import wintypes
 
     _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -46,14 +46,16 @@ if sys.platform == "win32":
 
 
 def _windows_open_non_reparse(path: str) -> int | None:
-    """Open *path* with reparse-point detection, returning fd or None.
-
-    Uses CreateFileW + FILE_FLAG_OPEN_REPARSE_POINT + GetFileInformationByHandle
-    to atomically detect reparse points on the same handle. Returns None if
-    not on Windows.
-    """
+    """Open *path* with reparse-point detection, returning fd or None."""
     if sys.platform != "win32":
         return None
+
+    # All symbols below are defined in the ``if sys.platform == "win32"`` block above.
+    _k32: Any = globals()["_kernel32"]
+    _msvcrt_mod: Any = globals()["_msvcrt_module"]
+    _wf: Any = globals()["wintypes"]
+    _info_cls: Any = globals()["_BY_HANDLE_FILE_INFORMATION"]
+
     GENERIC_READ = 0x80000000
     GENERIC_WRITE = 0x40000000
     FILE_SHARE_READ = 0x00000001
@@ -61,9 +63,11 @@ def _windows_open_non_reparse(path: str) -> int | None:
     OPEN_ALWAYS = 4
     FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
     FILE_ATTRIBUTE_REPARSE_POINT = 0x400
-    INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
 
-    handle = _kernel32.CreateFileW(
+    ctypes_mod = cast(Any, globals()["ctypes"])
+    INVALID_HANDLE_VALUE = _wf.HANDLE(-1).value
+
+    handle = _k32.CreateFileW(
         path,
         GENERIC_READ | GENERIC_WRITE,
         FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -73,19 +77,19 @@ def _windows_open_non_reparse(path: str) -> int | None:
         None,
     )
     if handle == INVALID_HANDLE_VALUE:
-        err = ctypes.get_last_error()
-        raise OSError(err, ctypes.FormatError(err).strip(), path)
+        err = ctypes_mod.get_last_error()
+        raise OSError(err, ctypes_mod.FormatError(err).strip(), path)
 
-    info = _BY_HANDLE_FILE_INFORMATION()
-    if not _kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
-        _kernel32.CloseHandle(handle)
-        raise ctypes.WinError()
+    info = _info_cls()
+    if not _k32.GetFileInformationByHandle(handle, ctypes_mod.byref(info)):
+        _k32.CloseHandle(handle)
+        raise ctypes_mod.WinError()
 
     if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT:
-        _kernel32.CloseHandle(handle)
+        _k32.CloseHandle(handle)
         raise ValueError(f"lock file is a reparse point: {path}")
 
-    return _msvcrt_module.open_osfhandle(handle, os.O_RDWR | getattr(os, "O_NOINHERIT", 0))
+    return cast(int, _msvcrt_mod.open_osfhandle(handle, os.O_RDWR | getattr(os, "O_NOINHERIT", 0)))
 
 
 class PromotionLock:
