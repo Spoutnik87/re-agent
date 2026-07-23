@@ -21,6 +21,14 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
     reverse_ok = args.skip_reverse or state.is_reverse_completed()
     build_ok = args.skip_build or state.is_build_completed()
 
+    if not args.skip_build and not build_ok and not getattr(args, "project_root", None):
+        print(
+            "Error: pipeline build requires --project-root; use --skip-build for reverse-only "
+            "or invoke explicit project build: re-agent build --project-root PROJECT_ROOT",
+            file=sys.stderr,
+        )
+        return 2
+
     if reverse_ok and build_ok:
         print("Pipeline already completed. Nothing to do.")
         if not args.skip_reverse and not args.skip_build:

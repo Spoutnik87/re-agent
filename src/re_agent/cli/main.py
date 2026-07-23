@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,23 +58,31 @@ def build_parser() -> argparse.ArgumentParser:
     # build
     build_p = sub.add_parser("build", help="Reconstruct project from flat .cpp files (Phase 2)")
     build_p.add_argument(
-        "--phase", choices=["analyze", "transform", "assemble"], default=None, help="Run a single build phase"
-    )
-    build_p.add_argument("--address", default=None, help="Single function address for ABI-preserving transform")
-    build_p.add_argument("--module", default=None, help="Restrict transform to a single module name")
-    build_p.add_argument("--subunit", type=int, default=None, help="Start at this subunit index for --module")
-    build_p.add_argument(
-        "--max-subunits", type=int, default=None, help="Process at most this many subunits in transform"
+        "--phase",
+        choices=["transform", "link", "package", "verify-recipe"],
+        default=None,
+        help="Run a single build phase (project mode also accepts link/package/verify-recipe)",
     )
     build_p.add_argument("--run-id", default=None, help="Run identifier for diagnostics/evidence paths")
-    build_p.add_argument("--project-root", default=None, help="Owned generic project root (project mode)")
+    build_p.add_argument("--project-root", required=True, help="Owned generic project root")
     build_p.add_argument("--profile", default=None, help="Transient generic toolchain profile (project mode only)")
     build_p.add_argument(
-        "--no-persist",
-        action="store_true",
-        help="Dry-run transform: skip all disk writes (no temp dirs, no state, no cache, no report)",
+        "--verify-recipe", action="store_true", help="Validate the project build recipe without running it"
+    )
+    build_p.add_argument(
+        "--allow-partial", action="store_true", help="Deprecated; project builds never publish partial results"
     )
 
+    run_p = sub.add_parser("run", help="Verify or replay a completed project run")
+    run_sub = run_p.add_subparsers(dest="run_command", required=True)
+    for operation, help_text in (
+        ("verify", "Verify recorded run identity, checkpoints, and transform evidence"),
+        ("replay", "Replay recorded transforms offline without a live provider"),
+    ):
+        operation_p = run_sub.add_parser(operation, help=help_text)
+        operation_p.add_argument("--project-root", required=True, help="Owned generic project root")
+        operation_p.add_argument("--run-id", required=True, help="Existing project run identifier")
+        operation_p.add_argument("--profile", default=None, help="Transient generic toolchain profile")
     # pipeline
     pipe_p = sub.add_parser("pipeline", help="Run full pipeline: reverse then build")
     pipe_p.add_argument("--address", help="Single function address (delegated to reverse)")
@@ -81,6 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     pipe_p.add_argument("--max-functions", type=int, default=None, help="Max functions (delegated to reverse)")
     pipe_p.add_argument("--skip-reverse", action="store_true", help="Skip reverse phase, run build only")
     pipe_p.add_argument("--skip-build", action="store_true", help="Skip build phase, run reverse only")
+    pipe_p.add_argument("--project-root", help="Owned generic project root for the build phase")
     pipe_p.add_argument("--skip-parity", action="store_true", help="Skip parity check")
 
     # parity
@@ -97,6 +107,33 @@ def build_parser() -> argparse.ArgumentParser:
     stat_p.add_argument("--phase", choices=["reverse", "build"], default=None, help="Show per-phase detail")
     stat_p.add_argument("--class", dest="class_name", help="Filter by class (reverse phase only)")
     stat_p.add_argument("--format", choices=["text", "json", "markdown"], default="text")
+
+    promote_p = sub.add_parser("promote", help="Project-scoped Release 5 promotion")
+    promote_sub = promote_p.add_subparsers(dest="promote_command", required=True)
+    prove_p = promote_sub.add_parser("prove", help="Run a promotion proof")
+    prove_p.add_argument("--project-root", required=True)
+    prove_p.add_argument("--proof", choices=["abi", "differential"], required=True)
+    target_group = prove_p.add_mutually_exclusive_group(required=True)
+    target_group.add_argument("--address")
+    target_group.add_argument("--all", action="store_true")
+    prove_p.add_argument("--build-id")
+    prove_p.add_argument("--profile")
+    prove_p.add_argument("--original-binary")
+    prove_p.add_argument("--promotion-root", help="External immutable promotion store")
+
+    promote_status = promote_sub.add_parser("status", help="Show promotion state")
+    promote_status.add_argument("--project-root", required=True)
+    promote_status.add_argument("--address")
+    promote_status.add_argument("--build-id")
+    promote_status.add_argument("--format", choices=["text", "json"], default="text")
+    promote_status.add_argument("--promotion-root", help="External immutable promotion store")
+
+    promote_project = promote_sub.add_parser("project", help="Atomically prove and promote the whole project")
+    promote_project.add_argument("--project-root", required=True)
+    promote_project.add_argument("--build-id")
+    promote_project.add_argument("--profile")
+    promote_project.add_argument("--original-binary", required=True)
+    promote_project.add_argument("--promotion-root", help="External immutable promotion store")
 
     return parser
 
@@ -134,6 +171,15 @@ def main(argv: list[str] | None = None) -> int:
 
         return cmd_build(args)
 
+    if args.command == "run":
+        from re_agent.cli.cmd_run import cmd_run
+
+        try:
+            return cmd_run(args)
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"Run rejected: {exc}", file=sys.stderr)
+            return 2
+
     if args.command == "pipeline":
         from re_agent.cli.cmd_pipeline import cmd_pipeline
 
@@ -148,6 +194,11 @@ def main(argv: list[str] | None = None) -> int:
         from re_agent.cli.cmd_status import cmd_status
 
         return cmd_status(args)
+
+    if args.command == "promote":
+        from re_agent.cli.cmd_promote import cmd_promote
+
+        return cmd_promote(args)
 
     parser.print_help()
     return 1

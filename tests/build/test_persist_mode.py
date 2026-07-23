@@ -1,9 +1,8 @@
-"""Tests for --no-persist mode (persist=False) in build transform.
+"""Tests for the internal persist=False mode in build transform.
 
 Verifies:
-1. CLI parses ``--no-persist`` correctly.
-2. ``persist=True`` (default) writes generated files, report, cache, state.
-3. ``persist=False`` skips ALL disk writes, cache sets, and save_state calls.
+1. ``persist=True`` (default) writes generated files, report, cache, state.
+2. ``persist=False`` skips ALL disk writes, cache sets, and save_state calls.
 4. Results and diagnostics are still computed in memory and returned.
 5. ``persist=False`` with ``compile_per_function=True`` still skips compilation
    and produces SKIPPED_COMPILE verdicts — zero I/O, zero compile calls.
@@ -20,51 +19,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from re_agent.build.state.cache import TransformCache
-from re_agent.cli.main import build_parser
-
-# ---------------------------------------------------------------------------
-# 1. CLI arg parsing
-# ---------------------------------------------------------------------------
-
-
-def test_build_parser_accepts_no_persist() -> None:
-    """Given the build subparser, When --no-persist is provided, Then the
-    parsed namespace has ``no_persist`` set to True."""
-    parser = build_parser()
-    args = parser.parse_args(["build", "--no-persist"])
-    assert args.no_persist is True
-
-
-def test_build_parser_no_persist_defaults_false() -> None:
-    """Given the build subparser, When --no-persist is omitted, Then
-    ``no_persist`` defaults to the argparse default (falsy / None)."""
-    parser = build_parser()
-    args = parser.parse_args(["build"])
-    # argparse store_true stores False when absent
-    assert args.no_persist is False
-
-
-def test_build_parser_no_persist_with_other_args() -> None:
-    """Given --no-persist combined with other transform args, When parsed,
-    Then all values are present."""
-    parser = build_parser()
-    args = parser.parse_args(
-        [
-            "build",
-            "--phase",
-            "transform",
-            "--module",
-            "physics",
-            "--max-subunits",
-            "3",
-            "--no-persist",
-        ]
-    )
-    assert args.phase == "transform"
-    assert args.module == "physics"
-    assert args.max_subunits == 3
-    assert args.no_persist is True
-
 
 # ---------------------------------------------------------------------------
 # Helpers (reuse patterns from test_cli_guardrails.py)
@@ -534,95 +488,6 @@ def test_persist_default_is_true(monkeypatch: Any, tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cmd_build_no_persist_skips_state_construction(monkeypatch: Any, tmp_path: Path) -> None:
-    """Given --no-persist, When cmd_build runs, Then PipelineState is NOT
-    constructed (== state is None so update_build/flush are never called)."""
-    # Create a valid AbiManifest for the contracts section
-    import hashlib
-
-    from re_agent.contracts import Architecture, CallingConvention, Symbol, manifest_from_symbols, save_manifest
-
-    manifest = manifest_from_symbols(
-        version="1.0.0",
-        architecture=Architecture.X86,
-        pointer_size=4,
-        symbols=[
-            Symbol(
-                address=0x1000,
-                name="func_a",
-                signature="void func_a()",
-                calling_convention=CallingConvention.CDECL,
-                output_path="mod_a.cpp",
-            ),
-        ],
-    )
-    manifest_path = tmp_path / "abi_manifest.json"
-    save_manifest(manifest, manifest_path)
-    raw_hash = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
-
-    config_path = tmp_path / "re-agent.yaml"
-    tp = tmp_path.as_posix()
-    config_path.write_text(
-        f"""
-pipeline:
-  state_file: "{tp}/pipeline-state.json"
-build:
-  input:
-    decompiled_dir: "{tp}/decompiled_stubs"
-  output:
-    work_dir: "{tp}"
-contracts:
-  transformation_policy: "preserve_abi"
-  abi_manifest_path: "{manifest_path.as_posix()}"
-  abi_manifest_sha256: "{raw_hash}"
-"""
-    )
-
-    # Write modules.json so the transform phase can at least start
-    _write_modules_json(tmp_path, [_M1])
-    _make_decompiled_stubs(tmp_path, [_M1])
-
-    import re_agent.cli.cmd_build as cb
-    from re_agent.state.pipeline_state import PipelineState
-
-    # Mock the analyzer phases to skip (we don't have real data)
-    monkeypatch.setattr("re_agent.build.analyze.graph_builder.build_graph", lambda cfg: {})
-    monkeypatch.setattr(
-        "re_agent.build.analyze.clusterer.cluster",
-        lambda g, cfg: {"metadata": {"module_count": 0, "orphan_count": 0}, "modules": {}},
-    )
-    monkeypatch.setattr("re_agent.build.analyze.indexer.index_modules", lambda m, cfg: None)
-
-    # Mock process_modules to avoid LLM calls
-    monkeypatch.setattr(
-        "re_agent.build.transform.module_processor.process_modules",
-        lambda *a, **kw: {"total": 0, "passed": 0, "failed": 0, "total_tokens": 0},
-    )
-    # Mock build_tree to avoid errors
-    monkeypatch.setattr("re_agent.build.assemble.tree_builder.build_tree", lambda cfg: None)
-
-    # Track PipelineState construction
-    orig_init = PipelineState.__init__
-    init_called_with_persist = [False]
-
-    def _tracking_init(self, path: str | Path) -> None:
-        # When persist=False, PipelineState should NOT be constructed
-        init_called_with_persist[0] = True
-        orig_init(self, path)
-
-    monkeypatch.setattr(PipelineState, "__init__", _tracking_init)
-
-    # Run with --no-persist and --phase to limit scope (we have mocks for all phases).
-    # Note: --config is a global argparse flag and must come BEFORE the subcommand.
-    args = build_parser().parse_args(["--config", str(config_path), "build", "--no-persist", "--phase", "transform"])
-    cb.cmd_build(args)
-
-    # PipelineState.__init__ should have been called because persist=False causes
-    # state = None (not constructed)
-    assert not init_called_with_persist[0], "PipelineState must NOT be constructed when --no-persist is given"
-
-
-# ---------------------------------------------------------------------------
 # 7. Integration test: persist=False with process_subunit NOT mocked,
 #    diagnostics/raw-capture/compile ENABLED, LLM stub → zero IO.
 # ---------------------------------------------------------------------------

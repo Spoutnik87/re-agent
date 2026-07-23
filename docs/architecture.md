@@ -1,323 +1,189 @@
 # Architecture
 
-re-agent is structured as a layered pipeline with three distinct phases for code
-reconstruction (Phase 2: Build) alongside the reverse-engineering pipeline (Phase 1).
+re-agent has an independent reverse/parity surface and a project-scoped
+workflow for owned snapshots, controlled builds, adapter-backed promotion,
+and replayable transform provenance:
 
 ```
-CLI → Config → Orchestrator → Agent Loop → LLM Providers
-                  |                |
-                  v                v
-          Function Picker     RE Backend (Ghidra)
-                  |
-                  v
-           Parity Engine
+binary + analysis → owned snapshot → lifecycle backend
+                         │
+                         └→ activated verified capabilities
 
-                  │
-                  ▼
-          Build Pipeline
-    analyze → transform → assemble
+project root → deterministic bulk transform → bounded recipe
+                         │                         │
+                         └── complete evidence ────┘
+                                      │
+                         immutable build + active pointer
+
+active build → ABI adapter proof → differential adapter proof
+                         │                    │
+                         └── immutable hash-chained evidence
+                                      │
+                            authenticated promotion view
+
+immutable TransformEvidence → run lock → verify / exact offline replay
 ```
 
-## Phase 1 — Reverse
+## Reverse and parity surface
 
-CLI → Config → Orchestrator → Agent Loop → LLM Providers + RE Backend (Ghidra)
+The reverse pipeline remains independent of build publication:
 
-### Layers
+`CLI → config → orchestrator → reverser/checker loop → RE backend → parity`
 
-- **CLI**: argparse entry points (init, reverse, build, parity, status)
-- **Config**: YAML + env + CLI overlay, project profiles, **ABI contracts** (breaking migration)
-- **Orchestrator**: Single function or class-level auto-advance
-- **Agents**: Reverser + Checker with fix loop
-- **LLM**: Protocol-based providers (Claude, Codex, OpenAI-compat)
-- **Backend**: RE tool abstraction with capability flags
-- **Parity**: 11-signal verification engine with scoring
-- **Reports**: JSON/markdown output, session tracking
+It supports single-function and class-level reversal, bounded retries, block
+reversal, objective structural checks, and configurable parity signals. These
+commands do not create or promote a project build.
 
----
+## Owned project and toolchain foundation
 
-## Build Pipeline Architecture (Phase 2)
+### Owned snapshots
 
-The build pipeline produces a C++ source tree from flat decompiled `.cpp` files.
-It runs in three sequential phases:
+`project provision` validates the original binary, inventories the analysis,
+copies it into a project-owned snapshot, and writes a `project.id`. The project
+fingerprint is derived from the original-binary hash and snapshot inventory
+hash. Snapshot paths and metadata are verified whenever a project command
+opens the root.
 
-```
-  .cpp files
-       │
-       ▼
-┌─────────────────────────────┐
-│  Phase 1: Analyze           │
-│                             │
-│  build_graph()  ── call     │
-│                   graph     │
-│       │                     │
-│       ▼                     │
-│  cluster()  ── networkx     │
-│               Louvain       │
-│       │                     │
-│       ▼                     │
-│  index_modules() ── TF-IDF  │
-│   (scikit-learn)  subunit   │
-│                    grouping │
-│       │                     │
-│       ▼                     │
-│  write_decls_header()  (opt)│
-└───────────┬─────────────────┘
-            │ modules.json
-            ▼
-┌─────────────────────────────┐
-│  Phase 2: Transform         │
-│                             │
-│  process_modules()          │
-│       │                     │
-│       ▼                     │
-│  For each module:           │
-│    build_context()          │
-│    process_subunit()        │
-│      ├── LLM generation     │
-│      ├── TARGET recovery    │
-│      ├── Compile gate       │
-│      └── Retry logic        │
-│       │                     │
-│       ▼                     │
-│  TransformBudget (global)   │
-│  ─ calls_remaining          │
-│  ─ tokens_remaining         │
-│  ─ compile_retry_remaining  │
-└───────────┬─────────────────┘
-            │ temp_transformed/
-            ▼
-┌─────────────────────────────┐
-│  Phase 3: Assemble          │
-│                             │
-│  build_tree()               │
-│    ├── Copy .cpp → src/     │
-│    ├── Copy .h → include/   │
-│    ├── generate_common_hdr  │
-│    ├── resolve_conflicts    │
-│    └── generate_cmake       │
-└─────────────────────────────┘
-            │
-            ▼
-      output/
-       ├── src/module_1/*.cpp
-       ├── include/module_1/*.h
-       ├── CMakeLists.txt
-       └── cr-agent-report.json
-```
+`project export` supplies lifecycle backends for generic analysis snapshots.
+The current backend choices are `offline-export` and `ghidra`. Backends produce
+validated exports; provisioning remains the no-replace operation that gives a
+project its owned identity.
 
-### Phase 1: Analyze
+### Verified capabilities
 
-Scans all decompiled `.cpp` files in `input.decompiled_dir` and produces a
-`modules.json` with function-to-module mapping and sub-unit groupings.
+Toolchain profiles are strict, target-neutral descriptions of compiler, linker,
+and optional inspection/proof commands. `toolchain activate` publishes a
+content-addressed profile and fingerprint, then updates the project's active
+link. Capability resolution authenticates the complete pointer → profile →
+fingerprint → binary chain before returning commands.
 
-| Step | Tool | Output |
-|------|------|--------|
-| `build_graph()` | Regex-based call detection (FUN_ and `0x` patterns) | Undirected call graph `dict[addr, set[addr]]` |
-| `cluster()` | **networkx** graph + **Louvain** community detection (`louvain_communities`) | Module clusters with min/max size enforcement, orphan detection |
-| `index_modules()` | **scikit-learn** `TfidfVectorizer` + `cosine_similarity` | Sub-unit grouping by TF-IDF similarity within each module |
-| `write_decls_header()` | Function declaration extraction | Optional declaration header when `output.decls_header` is configured |
+Passing `--profile` to a build or promotion command selects transient
+resolution. It fingerprints only the requested capabilities and writes no
+activation state. Activated and transient command identities are recorded in
+the evidence that consumes them.
 
-Modules that exceed `max_cluster_size` are re-clustered once with Louvain
-at the subgraph level. Functions in clusters below `min_cluster_size` are
-demoted to orphans.
+## Deterministic project build
 
-### Phase 2: Transform
+The legacy direct build mode is removed. Build orchestration is project-only:
+`--project-root` is required, and project files—not the caller's CWD—define the
+inputs and publication area.
 
-Sends each sub-unit to the LLM for code refinement. The global `TransformBudget`
-is shared across ALL subunits within a single invocation.
+The build phases are:
 
-**Components:**
+1. **Transform**: process the complete manifest in deterministic order and
+   create per-entry compile checkpoints.
+2. **Verify-recipe**: execute a bounded witness for the external recipe without
+   publishing a build.
+3. **Link/package**: consume complete transform checkpoints, materialize
+   recipe manifests, run the bounded external recipe, validate declared output,
+   and create build evidence.
 
-| Component | Source | Role |
-|-----------|--------|------|
-| `TransformBudget` | `src/re_agent/build/transform/subunit_processor.py` | Per-invocation call/token/retry budget |
-| `build_context()` | `src/re_agent/build/transform/context_builder.py` | Assembles neighbour context + functions to transform |
-| `process_subunit()` | `src/re_agent/build/transform/subunit_processor.py` | Single subunit: LLM gen → TARGET recovery → compile gate |
-| `TransformCache` | `src/re_agent/build/state/cache.py` | Source-hash → result cache to avoid re-processing |
-| `module_processor.py` | `src/re_agent/build/transform/` | Module-level orchestration, resume, persist vs no-persist |
+The recipe is constrained to project staging, has validated input/output paths,
+and cannot escape the project build area. Evidence binds at least the project
+fingerprint, manifest hashes, configuration, recipe hash, compiler and linker
+fingerprints, complete source/object coverage, output hash, and run identity.
 
-**TransformBudget** tracks three counters initialized from `build.optimization`:
+Publication uses an immutable no-replace destination and an authenticated
+active pointer. A failed recipe, stale checkpoint, incomplete coverage, or
+identity mismatch prevents publication. Existing active output is never
+replaced by a partial or failed run.
 
-```
-calls_remaining: 8               # max_llm_calls_per_run
-tokens_remaining: 150000         # max_llm_tokens_per_run
-compile_retry_calls_remaining: 3 # max_compile_retry_calls_per_run
-```
+Compilation and `MANIFEST_BOUND/COMPILE_PASS` evidence establish build gates
+only. They are not ABI proofs, behavioral proofs, runtime proofs, or semantic
+equivalence claims.
 
-When the call or token counter reaches zero (or a token delta exhausts the budget between calls),
-further LLM sends are rejected with `BUDGET_EXCEEDED`. A zero compile-retry counter
-only disables compile retries. Provider errors increment
-`provider_error_count` but do NOT zero the budget — the run continues until the
-call cap is hit.
+## Adapter proofs and promotion
 
-**Target Contract Mode** (`validation.target_contract_mode`):
+The generic adapter boundary receives an authenticated
+request and returns a bounded result plus captured evidence and attachments.
+The promotion service resolves the required proof capabilities from the
+toolchain chain, stages inputs under the external promotion root, and seals
+the results.
 
-- `legacy`: fallback is permitted only when no TARGET markers appear; partial or invalid markers reject identity.
-- `required`: TARGET mandatory for every function. Only partial, valid coverage enters recovery; missing or invalid markers fail immediately. Failed recovery →
-  `INCOMPLETE_TARGETS` → subunit rejected (no files written, no cache populated).
-  This is a **fail-closed** protocol.
+### Two proof stages
 
-### Phase 3: Assemble
+- **ABI proof** records the adapter's ABI-facing result for the selected
+  candidate/build.
+- **Differential proof** records the adapter comparison using the required
+  original-binary-equivalent input.
 
-Copies transformed files into a C++ source tree and generates build artifacts.
+Each stage produces content-addressed proof evidence. A sealed proof bundle
+hashes its evidence; the append-only promotion journal hash-chains batches.
+The immutable evidence store and active promotion publisher authenticate the
+bundle, journal, project/build identity, and current promotion view before
+reporting `PROMOTED`.
 
-| Step | Description |
-|------|-------------|
-| `build_tree()` | Creates `src/<module>/` and `include/<module>/`, copies `.cpp` / `.h` files |
-| `generate_common_header()` | Extracts function declarations from headers into `include/common.h` |
-| `resolve_conflicts()` | Reports cross-module symbol conflicts; it does not resolve them |
-| `generate_cmake()` | Writes `CMakeLists.txt` with static library targets per module |
+`promote project` is the atomic whole-project entry point: it runs both proof
+stages for every manifest entry, commits no journal or pointer until all
+bundles are complete, and publishes one authenticated active view. `promote
+prove` is useful for recording a single stage; `promote status` derives state
+from the current verified project/build and authenticated evidence rather than
+trusting history alone.
 
-The current orchestration does not make module compile warnings or all `FAIL_*` results
-block Assemble; inspect reports before treating the tree as buildable. `compile_final_project`
-is configured but not currently applied.
+### Promotion boundaries
 
-### Cache and State
+Promotion requires:
 
-| Artifact | Path | Written when |
-|----------|------|-------------|
-| `modules.json` | `{work_dir}/` | After analyze phase |
-| `cr-agent-cache.json` | `{optimization.cache_path}` | After each successful transform (persist mode) |
-| `cr-agent-state.json` | `{resume.state_path}` | After each subunit (persist mode), updated by module |
-| `cr-agent-report.json` | `{work_dir}/` | After transform (persist mode) |
-| `pipeline-state.json` | `{pipeline.state_file}` | Pipeline progress (persist mode) |
+- an existing verified project root;
+- an active verified build;
+- an external promotion root, outside the project tree; and
+- the original-binary-equivalent input for differential and whole-project
+  promotion.
 
-**`--no-persist` guarantee**: With `--no-persist`, NONE of the above artifacts
-are written to disk. No cache is created, no state loaded or saved, no report
-written, no temp directories created, and no compilation executed. LLM calls still
-run and consume budget. Output is a single JSON document on stdout.
+The CLI supports `promote prove`, `promote project`, and `promote status`.
+There are no reset, demote, force, or partial-promotion operations. Failed or
+stale evidence leaves the active promotion view unchanged.
 
-### Outputs
+Proofs make only the claims represented by their adapter protocols and
+authenticated inputs. Neither compilation nor these proofs claim general ABI
+equivalence, behavioral equivalence, or semantic correctness.
 
-| Output | Path | Content |
-|--------|------|---------|
-| Source files | `{target_dir}/src/<module>/*.cpp` | Transformed C++ source |
-| Headers | `{target_dir}/include/<module>/*.h` | Module headers |
-| Common header | `{target_dir}/include/common.h` | Aggregated declarations |
-| CMakeLists.txt | `{target_dir}/CMakeLists.txt` | CMake build definition |
-| Build report | `{target_dir}/cr-agent-report.json` | Per-function verdicts + summary |
+## Immutable transform evidence and replay
 
----
+### Per-target evidence
 
-## Prompt Architecture
+Transform produces one canonical, no-replace, target-path-addressed and
+content-hashed `TransformEvidence` record for each successfully transformed
+manifest entry. It binds the project fingerprint,
+snapshot fingerprint, raw and canonical manifest hashes, run ID, target
+identity, effective LLM configuration, request/messages, exact input and raw
+response, compiler argv and executable hash, generated source hash, and object
+hash. The evidence is addressed by its target path and validated by its content
+hash before use.
 
-Prompts live in two distinct directories with no overlap:
+`BuildEvidence` schema v2 is the project-level envelope. Each target
+checkpoint carries the relative TransformEvidence path and its hash, so build
+validation can prove that complete project coverage is linked to immutable
+per-target records. Historical schema v1 remains promotion-compatible compilation
+evidence, but is not replayable because it has no such linkage.
 
-### Reverse Prompts (Phase 1)
+### Run locking and verification
 
-Located at `src/re_agent/reverse/agents/prompts/`:
+Each project run has an OS-backed `build/runs/RUN_ID/.run.lock`. Build,
+verification, and replay operations hold the lock while re-reading the verified
+project, configuration, selected profile, run identity, checkpoints, and
+evidence. A changed, substituted, missing, or stale input rejects the operation.
 
-| File | Purpose |
-|------|---------|
-| `reverser_system.md` | System prompt for the main reverser agent |
-| `reverser_task.md` | Task prompt with per-function reversal instructions |
-| `checker_system.md` | System prompt for the parity checker agent |
-| `checker_task.md` | Task prompt for verification checks |
-| `block_reverser_system.md` | System prompt for block-level reversal |
-| `block_reverser_task.md` | Task prompt for block decomposition |
-| `decompose_system.md` | System prompt for function decomposition |
-| `decompose_task.md` | Task prompt for split guidance |
-| `varmap_system.md` | System prompt for variable map extraction |
-| `varmap_task.md` | Task prompt for variable mapping |
-| `fix_instructions.md` | Step-by-step fix instructions for compile errors |
+The CLI exposes:
 
-### Build Prompts (Phase 2)
-
-Located at `src/re_agent/build/prompts/`:
-
-| File | Purpose |
-|------|---------|
-| `transform_system.md` | System prompt for code reconstruction agent |
-| `transform_task.md` | Task prompt with module context + functions to transform |
-| `repair_system.md` | System prompt for compile-error repair mode |
-
----
-
-## Contracts Layer
-
-The contracts layer pins the binary's ABI surface via an external manifest.
-The manifest is **validated and pinned at config load time**, but its symbols
-are **not yet consumed by the Transform phase**. This is the foundational step:
-the manifest must exist, be valid, and pass integrity checks before any
-operational command proceeds.
-
-```
-re-agent.yaml                    abi_manifest.json
-┌────────────────────┐          ┌─────────────────────┐
-│ contracts:         │  path→   │ version: "1.0.0"    │
-│   transformation_  │  resolve │ architecture: "x86" │
-│     policy:        │  ───────→│ pointer_size: 4     │
-│     "preserve_abi" │  rel YAML│ symbols: [...]      │
-│   abi_manifest_    │  dir     │ sha256_hash: "..."  │
-│     path: "..."    │          └─────────────────────┘
-│   abi_manifest_    │               │
-│     sha256: "..."  │  raw hash     │ canonical hash
-│                   │  verifies │    │ verifies
-└────────┬──────────┘  ────────┘    ┘
-         │           load_config()   load_manifest()
-         │           fail-fast       fail-fast
-         v
-   All operational commands
-   (reverse / parity / status / pipeline / build)
+```bash
+re-agent run verify --project-root PROJECT_ROOT --run-id RUN_ID
+re-agent run replay --project-root PROJECT_ROOT --run-id RUN_ID
 ```
 
-### Key Properties
+`verify` checks the complete recorded run. `replay` regenerates transforms in
+an isolated replay directory using the recorded provider transcript and exact
+effective LLM configuration. It is offline-only and never contacts a live
+provider; regenerated source and object hashes must equal the recorded
+TransformEvidence hashes.
 
-- **Generic**: the `AbiManifest` model supports x86, x64, arm, aarch64 — not
-  tied to any specific binary. The core contains **no target-specific rules**.
-- **Versioned**: manifests carry a semver `version` string.
-- **Self-hashing**: the internal `sha256_hash` is computed over canonical JSON
-  with itself blanked, enabling tamper detection.
-- **Fail-fast**: missing policy, bad hash, unknown keys, path traversal — all
-  raise immediately during config or manifest loading.
+### Profile rule and limits
 
-### Breaking Migration
+Profile selection is deliberately unambiguous: omit `--profile` when the
+project has an activated profile; pass a transient profile only when no active
+profile exists. A transient profile cannot override activation and does not
+write activation state.
 
-The `contracts` section is **mandatory** when loading `re-agent.yaml`.
-This means every operational command — `reverse`, `parity`, `status`,
-`pipeline`, `build` — enforces it. Only `re-agent init` can be run without
-a pre-existing config.
-
-`contracts.transformation_policy` must be `"preserve_abi"`. Any config
-without it is rejected with a clear error. There is no legacy fallback.
-
-Use `re-agent init --abi-manifest <PATH>` to generate a config with the
-contracts section pre-populated.
-
-### Preserve-ABI Mode semantics
-
-When `contracts.transformation_policy` is `"preserve_abi"`,
-`re-agent build --phase transform --address 0xADDRESS` interface activates
-single-function manifest binding. The run performs these steps:
-
-1. Resolves `0xADDRESS` against the ABI manifest's `symbols` array.
-2. Supplies the manifest entry's declared signature and calling convention to the prompt, and validates the exact output path.
-3. Runs the LLM transform on the single function.
-4. Compiles the output.
-
-A successful compilation produces the composite verdict **MANIFEST_BOUND/COMPILE_PASS**:
-
-- **MANIFEST_BOUND**: the function address was matched to a manifest entry and
-  the response uses its exact declared output path. Signature and calling
-  convention are prompt constraints, not independently verified evidence.
-- **COMPILE_PASS**: the generated code compiles successfully under the
-  configured compiler flags.
-
-This verdict is **neither an ABI proof nor a behavioral proof**. It does not
-execute the compiled code, compare it against the original binary's disassembly,
-or verify semantic equivalence. It is a build-quality gate, not a correctness
-verification.
-
-**Current refusals:** the following invocations are rejected with exit code 2
-and a diagnostic message before any LLM call or disk operation:
-
-| Invocation | Refused | Reason |
-|------------|---------|--------|
-| `re-agent build` (no `--phase`) | Yes | Bulk all-phase run cannot satisfy per-address manifest binding |
-| `re-agent build --phase analyze` | No | Analysis remains available; it does not transform or publish ABI-bound code |
-| `re-agent build --phase assemble` | Yes | Expects a full module tree, incompatible with single-function binding |
-| `re-agent build --phase transform` (no `--address`) | Yes | Bulk transform processes multiple subunits, not a single entry |
-| `re-agent build --phase transform --address 0xADDRESS` | No | Single-function manifest-bound transform — the only accepted form |
-
-See [docs/configuration.md#abi-contracts](docs/configuration.md#abi-contracts) for the full
-configuration reference.
+This workflow does not establish universal compiler determinism, semantic equivalence, or
+behavioral correctness. Exact replay authenticates the recorded provider
+inputs/output, compiler identity, and artifact hashes for that run only.

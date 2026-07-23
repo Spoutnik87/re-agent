@@ -1,25 +1,22 @@
-"""CLI guardrail tests for build transform — module/subunit/max-subunits/run-id.
+"""CLI guardrail and internal transform tests for the project build flow.
 
 Deterministic, tmp_path-scoped, no live LLM/provider/network.
 Verifies:
-1. CLI args are parsed correctly from the build subparser.
-2. process_modules respects --module filter (skips non-matching modules).
-3. process_modules respects --subunit start (skips earlier subunits).
-4. process_modules respects --max-subunits bound (stops after N subunits).
-5. run_id propagates to subunit context and diagnostics.
-6. Bounded run cannot silently continue past max_subunits.
-7. Existing behavior preserved when no guardrail args are given.
+1. Removed legacy build options are rejected by the parser.
+2. Project builds require a project root before any side effects.
+3. Internal process_modules guardrails remain covered.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from re_agent.build.transform.manifest_bound_transform import ManifestBoundVerdict
-from re_agent.cli.cmd_build import cmd_build
+import pytest
+
 from re_agent.cli.main import build_parser
 
 # ---------------------------------------------------------------------------
@@ -27,233 +24,19 @@ from re_agent.cli.main import build_parser
 # ---------------------------------------------------------------------------
 
 
-def test_build_parser_accepts_module_arg() -> None:
-    """Given the build subparser, When --module is provided, Then the parsed
-    namespace has ``module`` set to the given value."""
+@pytest.mark.parametrize("removed_option", ["--address", "--module", "--subunit", "--max-subunits", "--no-persist"])
+def test_build_parser_rejects_removed_legacy_options(removed_option: str) -> None:
     parser = build_parser()
-    args = parser.parse_args(["build", "--module", "renderer"])
-    assert args.module == "renderer"
-
-
-def test_build_parser_module_defaults_none() -> None:
-    """Given the build subparser, When --module is omitted, Then ``module``
-    defaults to None (existing behaviour preserved)."""
-    parser = build_parser()
-    args = parser.parse_args(["build"])
-    assert args.module is None
-
-
-def test_build_parser_address_defaults_none() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["build"])
-    assert args.address is None
-
-
-def test_build_parser_accepts_address_arg() -> None:
-    parser = build_parser()
-    args = parser.parse_args(["build", "--phase", "transform", "--address", "0x401000"])
-    assert args.address == "0x401000"
-
-
-def test_build_parser_accepts_subunit_arg() -> None:
-    """Given the build subparser, When --subunit is provided, Then the parsed
-    namespace has ``subunit`` set to the given int."""
-    parser = build_parser()
-    args = parser.parse_args(["build", "--module", "renderer", "--subunit", "3"])
-    assert args.subunit == 3
-
-
-def test_build_parser_subunit_defaults_none() -> None:
-    """Given the build subparser, When --subunit is omitted, Then ``subunit``
-    defaults to None."""
-    parser = build_parser()
-    args = parser.parse_args(["build"])
-    assert args.subunit is None
-
-
-def test_build_parser_accepts_max_subunits_arg() -> None:
-    """Given the build subparser, When --max-subunits is provided, Then the
-    parsed namespace has ``max_subunits`` set to the given int."""
-    parser = build_parser()
-    args = parser.parse_args(["build", "--max-subunits", "5"])
-    assert args.max_subunits == 5
-
-
-def test_build_parser_max_subunits_defaults_none() -> None:
-    """Given the build subparser, When --max-subunits is omitted, Then
-    ``max_subunits`` defaults to None."""
-    parser = build_parser()
-    args = parser.parse_args(["build"])
-    assert args.max_subunits is None
-
-
-def test_no_persist_report_is_exact_json(monkeypatch, capsys, tmp_path) -> None:
-    cfg = SimpleNamespace(
-        build=SimpleNamespace(),
-        llm=SimpleNamespace(),
-        pipeline=SimpleNamespace(state_file=str(tmp_path / "state")),
-        contracts=SimpleNamespace(transformation_policy="preserve_abi", verified_manifest=object()),
-    )
-    monkeypatch.setattr("re_agent.cli.cmd_build.load_config", lambda _path: cfg)
-    monkeypatch.setattr(
-        "re_agent.build.transform.manifest_bound_transform.run_manifest_bound_transform",
-        lambda *args, **kwargs: SimpleNamespace(
-            address=0x401000,
-            path="unit/fn.cpp",
-            verdict=ManifestBoundVerdict.SKIPPED_COMPILE,
-            compiles=False,
-        ),
-    )
-    args = build_parser().parse_args(
-        [
-            "--config",
-            str(tmp_path / "config.yml"),
-            "build",
-            "--phase",
-            "transform",
-            "--address",
-            "0x401000",
-            "--no-persist",
-        ]
-    )
-    assert cmd_build(args) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload == {
-        "run_type": "no-persist",
-        "exit_code": 0,
-        "summary": {
-            "total": 1,
-            "passed": 0,
-            "failed": 1,
-            "incomplete": 0,
-            "hard_rejects": 0,
-            "budget_exceeded": 0,
-            "provider_errors": 0,
-            "contract_failed": False,
-        },
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_calls": 0},
-        "budget": {
-            "calls_remaining": 0,
-            "tokens_remaining": 0,
-            "compile_retry_calls_remaining": 0,
-            "exceeded": False,
-            "exceeded_reason": "",
-        },
-        "results": [
-            {
-                "function": "0x401000",
-                "verdict": "SKIPPED_COMPILE",
-                "compiles": False,
-                "files_matched": 1,
-                "match_strategy": "explicit_identity",
-                "identity_state": "explicit",
-                "identity_reason": "",
-                "compile_error_category": None,
-                "files": [{"path": "unit/fn.cpp"}],
-            }
-        ],
-    }
-
-
-def test_no_persist_error_report_is_exact_json(monkeypatch, capsys, tmp_path) -> None:
-    cfg = SimpleNamespace(
-        build=SimpleNamespace(),
-        llm=SimpleNamespace(),
-        pipeline=SimpleNamespace(state_file=str(tmp_path / "state")),
-        contracts=SimpleNamespace(transformation_policy="preserve_abi", verified_manifest=object()),
-    )
-    monkeypatch.setattr("re_agent.cli.cmd_build.load_config", lambda _path: cfg)
-    monkeypatch.setattr(
-        "re_agent.build.transform.manifest_bound_transform.run_manifest_bound_transform",
-        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("provider down")),
-    )
-    args = build_parser().parse_args(
-        [
-            "--config",
-            str(tmp_path / "config.yml"),
-            "build",
-            "--phase",
-            "transform",
-            "--address",
-            "0x401000",
-            "--no-persist",
-        ]
-    )
-    assert cmd_build(args) == 2
-    payload = json.loads(capsys.readouterr().out)
-    assert payload == {
-        "run_type": "no-persist",
-        "exit_code": 2,
-        "summary": {
-            "total": 1,
-            "passed": 0,
-            "failed": 1,
-            "incomplete": 0,
-            "hard_rejects": 0,
-            "budget_exceeded": 0,
-            "provider_errors": 1,
-            "contract_failed": True,
-        },
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_calls": 0},
-        "budget": {
-            "calls_remaining": 0,
-            "tokens_remaining": 0,
-            "compile_retry_calls_remaining": 0,
-            "exceeded": False,
-            "exceeded_reason": "",
-        },
-        "results": [],
-    }
-
-
-def test_persistent_preserve_failure_marks_completed_state_failed(monkeypatch, tmp_path, capsys) -> None:
-    state_path = tmp_path / "pipeline.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "pipeline_version": "1.0",
-                "phases": {"reverse": {"status": "completed"}, "build": {"status": "completed"}},
-            }
-        ),
-        encoding="utf-8",
-    )
-    cfg = SimpleNamespace(
-        build=SimpleNamespace(),
-        llm=SimpleNamespace(),
-        pipeline=SimpleNamespace(state_file=str(state_path)),
-        contracts=SimpleNamespace(transformation_policy="preserve_abi", verified_manifest=object()),
-    )
-    monkeypatch.setattr("re_agent.cli.cmd_build.load_config", lambda _path: cfg)
-    monkeypatch.setattr(
-        "re_agent.build.transform.manifest_bound_transform.run_manifest_bound_transform",
-        lambda *args, **kwargs: SimpleNamespace(
-            successful=False,
-            verdict=ManifestBoundVerdict.COMPILE_FAIL,
-            compiler_log="failed",
-            address=0x401000,
-            compiles=False,
-        ),
-    )
-    args = build_parser().parse_args(
-        [
-            "--config",
-            str(tmp_path / "config.yml"),
-            "build",
-            "--phase",
-            "transform",
-            "--address",
-            "0x401000",
-        ]
-    )
-    assert cmd_build(args) == 2
-    assert json.loads(state_path.read_text(encoding="utf-8"))["phases"]["build"]["status"] == "failed"
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["build", "--project-root", "project", removed_option, "1"])
+    assert exc_info.value.code == 2
 
 
 def test_build_parser_accepts_run_id_arg() -> None:
     """Given the build subparser, When --run-id is provided, Then the parsed
     namespace has ``run_id`` set to the given string."""
     parser = build_parser()
-    args = parser.parse_args(["build", "--run-id", "renderer-subunit-3-cache-aware"])
+    args = parser.parse_args(["build", "--project-root", "project", "--run-id", "renderer-subunit-3-cache-aware"])
     assert args.run_id == "renderer-subunit-3-cache-aware"
 
 
@@ -261,48 +44,17 @@ def test_build_parser_run_id_defaults_none() -> None:
     """Given the build subparser, When --run-id is omitted, Then ``run_id``
     defaults to None (preserving existing behaviour)."""
     parser = build_parser()
-    args = parser.parse_args(["build"])
+    args = parser.parse_args(["build", "--project-root", "project"])
     assert args.run_id is None
 
 
-def test_build_parser_all_new_args_together() -> None:
-    """Given the build subparser with all four new args, When parsed, Then all
-    values are present in the namespace."""
-    parser = build_parser()
-    args = parser.parse_args(
-        [
-            "build",
-            "--phase",
-            "transform",
-            "--module",
-            "renderer",
-            "--subunit",
-            "3",
-            "--max-subunits",
-            "1",
-            "--run-id",
-            "renderer-test-001",
-        ]
+def test_build_parser_accepts_project_release4_options() -> None:
+    args = build_parser().parse_args(
+        ["build", "--project-root", "project", "--phase", "transform", "--run-id", "release4"]
     )
+    assert args.project_root == "project"
     assert args.phase == "transform"
-    assert args.module == "renderer"
-    assert args.subunit == 3
-    assert args.max_subunits == 1
-    assert args.run_id == "renderer-test-001"
-
-
-def test_build_parser_old_args_still_work() -> None:
-    """Given the build subparser with only existing args, When parsed, Then
-    everything works and no new keys are unexpectedly set to non-None."""
-    parser = build_parser()
-    args = parser.parse_args(["build", "--phase", "analyze"])
-    assert args.phase == "analyze"
-    # New args must all default to None (string-type args default None via
-    # argparse default=None, so --run-id is None when omitted).
-    assert args.module is None
-    assert args.subunit is None
-    assert args.max_subunits is None
-    assert args.run_id is None
+    assert args.run_id == "release4"
 
 
 # ---------------------------------------------------------------------------
@@ -911,278 +663,67 @@ def _fake_process_modules_mixed(*a: Any, **kw: Any) -> dict:
     }
 
 
-def _make_cmd_build_args(
-    no_persist: bool = False,
-    phase: str | None = "transform",
-    address: str | None = None,
-    module: str | None = None,
-    subunit: int | None = None,
-    max_subunits: int | None = None,
-    run_id: str | None = None,
-) -> SimpleNamespace:
-    """Build an argparse namespace for cmd_build."""
-    return SimpleNamespace(
-        config="",
-        no_persist=no_persist,
-        phase=phase,
-        address=address,
-        module=module,
-        subunit=subunit,
-        max_subunits=max_subunits,
-        run_id=run_id,
+def test_cmd_build_without_project_root_rejects_before_side_effects(monkeypatch: Any, capsys: Any) -> None:
+    import re_agent.cli.cmd_build as cb
+
+    calls: list[str] = []
+
+    def fail_load_config(*args: Any, **kwargs: Any) -> Any:
+        calls.append("load_config")
+        raise AssertionError("load_config must not run without --project-root")
+
+    monkeypatch.setattr(cb, "load_config", fail_load_config)
+    monkeypatch.setattr(
+        "re_agent.project.context.load_verified_project",
+        lambda *args, **kwargs: calls.append("project") or None,
     )
+    args = argparse.Namespace(config="missing.yml")
+
+    assert cb.cmd_build(args) == 2
+    assert calls == []
+    assert "requires --project-root" in capsys.readouterr().err
 
 
-def _make_preserve_abi_config() -> SimpleNamespace:
-    return SimpleNamespace(
-        build=SimpleNamespace(output=SimpleNamespace(target_dir="")),
-        llm=SimpleNamespace(model="test"),
-        pipeline=SimpleNamespace(state_file=""),
-        contracts=SimpleNamespace(transformation_policy="preserve_abi"),
-    )
+def test_pipeline_build_attempt_rejects_before_reverse(monkeypatch: Any, tmp_path: Path) -> None:
+    import re_agent.cli.cmd_pipeline as cp
+
+    state_path = tmp_path / "pipeline.json"
+    cfg = SimpleNamespace(pipeline=SimpleNamespace(state_file=str(state_path)))
+    reverse_called = False
+    monkeypatch.setattr(cp, "load_config", lambda _path: cfg)
+
+    def fail_reverse(_args: Any) -> int:
+        nonlocal reverse_called
+        reverse_called = True
+        return 0
+
+    monkeypatch.setattr("re_agent.cli.cmd_reverse.cmd_reverse", fail_reverse)
+    args = build_parser().parse_args(["pipeline", "--skip-reverse"])
+
+    assert cp.cmd_pipeline(args) == 2
+    assert not reverse_called
 
 
-def test_cmd_build_preserve_abi_transform_requires_address(monkeypatch: Any, capsys: Any) -> None:
-    import re_agent.cli.cmd_build as cb
+def test_pipeline_skip_build_remains_supported(monkeypatch: Any, tmp_path: Path) -> None:
+    import re_agent.cli.cmd_pipeline as cp
 
-    monkeypatch.setattr(cb, "load_config", lambda *a, **kw: _make_preserve_abi_config())
-    rc = cb.cmd_build(_make_cmd_build_args(phase="transform"))
-    assert rc == 2
-    assert "requires exactly one --address" in capsys.readouterr().err
+    state_path = tmp_path / "pipeline.json"
+    cfg = SimpleNamespace(pipeline=SimpleNamespace(state_file=str(state_path)))
+    reverse_called = False
+    monkeypatch.setattr(cp, "load_config", lambda _path: cfg)
 
+    def fake_reverse(_args: Any) -> int:
+        nonlocal reverse_called
+        reverse_called = True
+        return 0
 
-def test_cmd_build_preserve_abi_rejects_bulk_and_assemble(monkeypatch: Any) -> None:
-    import re_agent.cli.cmd_build as cb
+    monkeypatch.setattr("re_agent.cli.cmd_reverse.cmd_reverse", fake_reverse)
+    args = build_parser().parse_args(["pipeline", "--skip-build"])
 
-    monkeypatch.setattr(cb, "load_config", lambda *a, **kw: _make_preserve_abi_config())
-    for phase in (None, "assemble"):
-        assert cb.cmd_build(_make_cmd_build_args(phase=phase)) == 2
-
-
-def test_cmd_build_preserve_abi_rejects_address_with_module_or_subunit(monkeypatch: Any) -> None:
-    import re_agent.cli.cmd_build as cb
-
-    monkeypatch.setattr(cb, "load_config", lambda *a, **kw: _make_preserve_abi_config())
-    assert cb.cmd_build(_make_cmd_build_args(address="0x401000", module="renderer")) == 2
-    assert cb.cmd_build(_make_cmd_build_args(address="0x401000", subunit=2)) == 2
+    assert cp.cmd_pipeline(args) == 0
+    assert reverse_called
 
 
-def test_cmd_build_no_persist_phase_none_exit2(monkeypatch: Any) -> None:
-    """--no-persist without --phase → exit 2 (reject all phases)."""
-    import re_agent.cli.cmd_build as cb
-
-    def _mock_load(*a, **kw):
-        return SimpleNamespace(
-            build=SimpleNamespace(output=SimpleNamespace(target_dir="")),
-            llm=SimpleNamespace(model="test"),
-            pipeline=SimpleNamespace(state_file=""),
-        )
-
-    monkeypatch.setattr(cb, "load_config", _mock_load)
-    rc = cb.cmd_build(_make_cmd_build_args(no_persist=True, phase=None))
-    assert rc == 2, f"Expected exit 2, got {rc}"
-
-
-def test_cmd_build_no_persist_phase_analyze_exit2(monkeypatch: Any) -> None:
-    """--no-persist --phase analyze → exit 2."""
-    import re_agent.cli.cmd_build as cb
-
-    def _mock_load(*a, **kw):
-        return SimpleNamespace(
-            build=SimpleNamespace(output=SimpleNamespace(target_dir="")),
-            llm=SimpleNamespace(model="test"),
-            pipeline=SimpleNamespace(state_file=""),
-        )
-
-    monkeypatch.setattr(cb, "load_config", _mock_load)
-    rc = cb.cmd_build(_make_cmd_build_args(no_persist=True, phase="analyze"))
-    assert rc == 2, f"Expected exit 2, got {rc}"
-
-
-def test_cmd_build_no_persist_phase_assemble_exit2(monkeypatch: Any) -> None:
-    """--no-persist --phase assemble → exit 2."""
-    import re_agent.cli.cmd_build as cb
-
-    def _mock_load(*a, **kw):
-        return SimpleNamespace(
-            build=SimpleNamespace(output=SimpleNamespace(target_dir="")),
-            llm=SimpleNamespace(model="test"),
-            pipeline=SimpleNamespace(state_file=""),
-        )
-
-    monkeypatch.setattr(cb, "load_config", _mock_load)
-    rc = cb.cmd_build(_make_cmd_build_args(no_persist=True, phase="assemble"))
-    assert rc == 2, f"Expected exit 2, got {rc}"
-
-
-def test_cmd_build_no_persist_phase_transform_allowed(monkeypatch: Any, tmp_path: Path) -> None:
-    """--no-persist --phase transform is allowed."""
-    import re_agent.cli.cmd_build as cb
-
-    def _mock_load(*a, **kw):
-        return SimpleNamespace(
-            build=SimpleNamespace(output=SimpleNamespace(target_dir=str(tmp_path))),
-            llm=SimpleNamespace(model="test"),
-            pipeline=SimpleNamespace(state_file=str(tmp_path / "st.json")),
-        )
-
-    monkeypatch.setattr(cb, "load_config", _mock_load)
-    monkeypatch.setattr(
-        "re_agent.build.transform.module_processor.process_modules",
-        lambda *a, **kw: {
-            "total": 0,
-            "passed": 0,
-            "failed": 0,
-            "incomplete": 0,
-            "hard_rejects": 0,
-            "contract_failed": False,
-            "total_tokens": 0,
-        },
-    )
-    rc = cb.cmd_build(_make_cmd_build_args(no_persist=True, phase="transform"))
-    assert rc != 2, f"no-persist + transform should not exit 2, got {rc}"
-
-
-def _mock_analyze_and_build():
-    """Return mocks for analyze and assemble phases (full pipeline)."""
-    import re_agent.build.analyze.clusterer as cl
-    import re_agent.build.analyze.decls_generator as dg
-    import re_agent.build.analyze.graph_builder as gb
-    import re_agent.build.analyze.indexer as idx
-
-    return gb, cl, idx, dg
-
-
-def test_cmd_build_contract_failed_exit2_assemble_skipped(monkeypatch: Any, tmp_path: Path) -> None:
-    """Full pipeline with contract failure → exit 2, assemble NOT called."""
-    import re_agent.build.analyze.clusterer as _cl
-    import re_agent.build.analyze.decls_generator as _dg
-    import re_agent.build.analyze.graph_builder as _gb
-    import re_agent.build.analyze.indexer as _idx
-    import re_agent.build.assemble.tree_builder as tb
-    import re_agent.build.transform.module_processor as mp
-    import re_agent.cli.cmd_build as cb
-
-    monkeypatch.setattr(
-        cb,
-        "load_config",
-        lambda p: SimpleNamespace(
-            build=SimpleNamespace(output=SimpleNamespace(target_dir=str(tmp_path))),
-            llm=SimpleNamespace(model="test"),
-            pipeline=SimpleNamespace(state_file=str(tmp_path / "state.json")),
-        ),
-    )
-    monkeypatch.setattr(mp, "process_modules", _fake_process_modules_contract_failed)
-    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
-    # Mock analyze phase
-    monkeypatch.setattr(_gb, "build_graph", lambda c: {})
-    monkeypatch.setattr(
-        _cl, "cluster", lambda g, c: {"modules": {}, "metadata": {"module_count": 0, "orphan_count": 0}}
-    )  # noqa: E501
-    monkeypatch.setattr(_idx, "index_modules", lambda m, c: None)
-    monkeypatch.setattr(_dg, "write_decls_header", lambda c: None)
-    # Assemble should NOT be called
-    assemble_called = [False]
-    monkeypatch.setattr(tb, "build_tree", lambda c: assemble_called.__setitem__(0, True))
-
-    # Full pipeline: phase=None runs analyze, transform, assemble
-    rc = cb.cmd_build(_make_cmd_build_args(no_persist=False, phase=None))
-    assert rc == 2, f"Expected exit 2 for contract_failed, got {rc}"
-    assert not assemble_called[0], "Assemble must NOT be called on contract failure"
-
-
-def test_cmd_build_hard_reject_exit2(monkeypatch: Any, tmp_path: Path) -> None:
-    """Full pipeline hard reject → exit 2, assemble skipped."""
-    import re_agent.build.analyze.clusterer as _cl
-    import re_agent.build.analyze.decls_generator as _dg
-    import re_agent.build.analyze.graph_builder as _gb
-    import re_agent.build.analyze.indexer as _idx
-    import re_agent.build.assemble.tree_builder as tb
-    import re_agent.build.transform.module_processor as mp
-    import re_agent.cli.cmd_build as cb
-
-    monkeypatch.setattr(
-        cb,
-        "load_config",
-        lambda p: SimpleNamespace(
-            build=SimpleNamespace(output=SimpleNamespace(target_dir=str(tmp_path))),
-            llm=SimpleNamespace(model="test"),
-            pipeline=SimpleNamespace(state_file=str(tmp_path / "state.json")),
-        ),
-    )
-    monkeypatch.setattr(mp, "process_modules", _fake_process_modules_hard_reject)
-    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
-    monkeypatch.setattr(_gb, "build_graph", lambda c: {})
-    monkeypatch.setattr(
-        _cl, "cluster", lambda g, c: {"modules": {}, "metadata": {"module_count": 0, "orphan_count": 0}}
-    )  # noqa: E501
-    monkeypatch.setattr(_idx, "index_modules", lambda m, c: None)
-    monkeypatch.setattr(_dg, "write_decls_header", lambda c: None)
-    assemble_called = [False]
-    monkeypatch.setattr(tb, "build_tree", lambda c: assemble_called.__setitem__(0, True))
-
-    rc = cb.cmd_build(_make_cmd_build_args(no_persist=False, phase=None))
-    assert rc == 2, f"Expected exit 2 for hard reject, got {rc}"
-    assert not assemble_called[0], "Assemble must NOT be called on hard reject"
-
-
-def test_cmd_build_mixed_pass_and_contract_failure_exit2(monkeypatch: Any, tmp_path: Path) -> None:
-    """Full pipeline mixed PASS + contract failure → exit 2, assemble skipped."""
-    import re_agent.build.analyze.clusterer as _cl
-    import re_agent.build.analyze.decls_generator as _dg
-    import re_agent.build.analyze.graph_builder as _gb
-    import re_agent.build.analyze.indexer as _idx
-    import re_agent.build.assemble.tree_builder as tb
-    import re_agent.build.transform.module_processor as mp
-    import re_agent.cli.cmd_build as cb
-
-    monkeypatch.setattr(
-        cb,
-        "load_config",
-        lambda p: SimpleNamespace(
-            build=SimpleNamespace(output=SimpleNamespace(target_dir=str(tmp_path))),
-            llm=SimpleNamespace(model="test"),
-            pipeline=SimpleNamespace(state_file=str(tmp_path / "state.json")),
-        ),
-    )
-    monkeypatch.setattr(mp, "process_modules", _fake_process_modules_mixed)
-    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
-    monkeypatch.setattr(_gb, "build_graph", lambda c: {})
-    monkeypatch.setattr(
-        _cl, "cluster", lambda g, c: {"modules": {}, "metadata": {"module_count": 0, "orphan_count": 0}}
-    )  # noqa: E501
-    monkeypatch.setattr(_idx, "index_modules", lambda m, c: None)
-    monkeypatch.setattr(_dg, "write_decls_header", lambda c: None)
-    assemble_called = [False]
-    monkeypatch.setattr(tb, "build_tree", lambda c: assemble_called.__setitem__(0, True))
-
-    rc = cb.cmd_build(_make_cmd_build_args(no_persist=False, phase=None))
-    assert rc == 2, f"Expected exit 2 for mixed, got {rc}"
-    assert not assemble_called[0], "Assemble must NOT be called on mixed failure"
-
-
-def test_cmd_build_full_pass_completes_ok(monkeypatch: Any, tmp_path: Path) -> None:
-    """All PASS → exit 0."""
-    import re_agent.build.transform.module_processor as mp
-    import re_agent.cli.cmd_build as cb
-
-    monkeypatch.setattr(
-        cb,
-        "load_config",
-        lambda p: SimpleNamespace(
-            build=SimpleNamespace(output=SimpleNamespace(target_dir=str(tmp_path))),
-            llm=SimpleNamespace(model="test"),
-            pipeline=SimpleNamespace(state_file=str(tmp_path / "state.json")),
-        ),
-    )
-    monkeypatch.setattr(mp, "process_modules", _fake_process_modules_ok)
-    monkeypatch.setattr(mp, "create_provider", lambda c: _FakeLLMProvider())
-
-    rc = cb.cmd_build(_make_cmd_build_args(no_persist=False, phase="transform"))
-    assert rc == 0, f"Expected exit 0 for all PASS, got {rc}"
-
-
-# ═════════════════════════════════════════════════════════════════════════════
 # 5. Module completion tests (process_modules level)
 # ═════════════════════════════════════════════════════════════════════════════
 
