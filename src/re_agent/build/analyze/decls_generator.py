@@ -148,7 +148,7 @@ def _read_per_function(exports_dir: Path, address: str) -> dict[str, Any]:
     try:
         data: dict[str, Any] = json.loads(f.read_text(encoding="utf-8"))
         return data
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         return {}
 
 

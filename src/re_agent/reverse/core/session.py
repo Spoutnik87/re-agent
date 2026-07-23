@@ -23,7 +23,7 @@ class Session:
     def load(self) -> None:
         try:
             self._data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             self._data = {"functions": {}, "runs": []}
 
     def save(self) -> None:

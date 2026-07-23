@@ -157,7 +157,7 @@ for reverse, project, toolchain, build, promotion, and replay configuration.
 pip install re-agent
 ```
 
-Requirements include Python 3.11+, a configured RE backend, and a supported
+Requirements include Python 3.14+, a configured RE backend, and a supported
 LLM provider. The project core is generic and contains no target-specific
 rules.
 

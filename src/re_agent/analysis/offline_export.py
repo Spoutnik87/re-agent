@@ -45,7 +45,7 @@ class OfflineExportBackend:
             raw = load_json(meta)
             version = str(raw.get("schema_version", ""))
             return BackendHealth(ok=True, version=version)
-        except (SnapshotError, OSError):
+        except SnapshotError, OSError:
             return BackendHealth(ok=False, version="")
 
     def fingerprint(self) -> BackendFingerprint:

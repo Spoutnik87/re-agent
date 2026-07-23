@@ -715,7 +715,7 @@ class PromotionService:
             try:
                 proof_evidence = tuple(item for item in bundle.evidence if item.evidence_type == proof_type)
                 stages = {int(item.payload["stage"]) for item in proof_evidence}
-            except (KeyError, TypeError, ValueError):
+            except KeyError, TypeError, ValueError:
                 return False
             if stages != {0, 1} or any(item.payload.get("passed") is not True for item in proof_evidence):
                 return False
@@ -905,7 +905,7 @@ class PromotionService:
                     raise _CorruptEvidenceError("stage 1 contains unexpected stage 1 binding metadata")
                 if dict(request.hashes) != expected_hashes:
                     raise _StaleEvidenceError("proof request input hashes are stale")
-            except (_StaleEvidenceError, _CorruptEvidenceError):
+            except _StaleEvidenceError, _CorruptEvidenceError:
                 raise
             except (KeyError, TypeError, ValueError, json.JSONDecodeError, binascii.Error) as exc:
                 raise _CorruptEvidenceError("proof bundle has malformed adapter evidence") from exc
@@ -984,7 +984,7 @@ class PromotionService:
                 for s, bundle in zip(context.verified_abi_manifest.value.symbols, bundles.values(), strict=True)
             }
             return active_bundles == expected
-        except (OSError, TypeError, ValueError, KeyError):
+        except OSError, TypeError, ValueError, KeyError:
             return False
 
     def _relative(self, path: Path) -> str:

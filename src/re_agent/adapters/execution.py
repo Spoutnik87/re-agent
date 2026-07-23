@@ -26,7 +26,7 @@ def _read(stream: BinaryIO, box: list[bytes], limit: int) -> None:
         while chunk := stream.read(65536):
             if len(kept) < limit:
                 kept.extend(chunk[: limit - len(kept)])
-    except (OSError, ValueError):
+    except OSError, ValueError:
         pass
     box.append(bytes(kept))
 
